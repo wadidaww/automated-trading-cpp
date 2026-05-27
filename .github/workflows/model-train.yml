@@ -1,0 +1,29 @@
+name: model-train
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: Symbol
+        required: true
+      date_range:
+        description: Date range
+        required: true
+      model_type:
+        description: Model type
+        required: true
+  schedule:
+    - cron: '30 2 * * 1'
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset dev
+      - run: cmake --build --preset dev
+      - run: ./build/dev/futu_model_train --config config/config.dev.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trained-model
+          path: data/models/

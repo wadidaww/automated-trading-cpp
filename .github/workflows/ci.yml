@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-test-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Ninja and CMake
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy clang-format gcovr
+      - name: Configure
+        run: cmake --preset ci
+      - name: Build
+        run: cmake --build --preset ci
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
+      - name: clang-tidy
+        run: find src -name '*.cpp' -print0 | xargs -0 -n1 clang-tidy -- -Iinclude
+      - name: clang-format check
+        run: clang-format --dry-run --Werror $(find include src tests -name '*.[hc]pp' -o -name '*.hpp')
+      - name: Coverage
+        run: gcovr -r . --html --html-details -o build/ci/coverage.html || true

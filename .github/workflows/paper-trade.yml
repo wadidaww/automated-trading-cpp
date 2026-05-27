@@ -1,0 +1,17 @@
+name: paper-trade
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [model-train]
+    types: [completed]
+
+jobs:
+  paper-trade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d mock-opend
+      - run: cmake --preset dev
+      - run: cmake --build --preset dev
+      - run: ./build/dev/futu_trader --health-check

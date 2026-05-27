@@ -1,0 +1,26 @@
+opend:
+  host: "127.0.0.1"
+  port: 11111
+  heartbeat_interval_s: 10
+  reconnect_max_attempts: 5
+trading:
+  account_id: "${FUTU_ACCOUNT_ID}"
+  market: "HK"
+  symbols: ["700.HK"]
+  order_type: "LIMIT"
+  max_position_size_hkd: 10000
+  max_portfolio_notional_hkd: 100000
+  max_daily_loss_hkd: 2000
+model:
+  type: "mean_reversion"
+  path: "data/models/dev_model.bin"
+  hot_reload: true
+  confidence_threshold: 0.55
+pipeline:
+  data_window_size: 50
+  feature_interval: "1m"
+  signal_cooldown_s: 30
+logging:
+  level: "debug"
+  file: "logs/trader-dev.log"
+  rotate_mb: 20

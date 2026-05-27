@@ -45,23 +45,17 @@ int main() {
   (void)apiClient.getOrderList();
   (void)apiClient.getKl("700.HK", 3);
 
-  assert(std::find(commands.begin(), commands.end(), futu_trader::futuOpenApiCommand::initConnect) !=
-         commands.end());
-  assert(std::find(commands.begin(), commands.end(), futu_trader::futuOpenApiCommand::unlockTrade) !=
-         commands.end());
-  assert(std::find(commands.begin(), commands.end(), futu_trader::futuOpenApiCommand::placeOrder) !=
-         commands.end());
-  assert(std::find(commands.begin(), commands.end(), futu_trader::futuOpenApiCommand::modifyOrder) !=
-         commands.end());
-  assert(std::find(commands.begin(), commands.end(), futu_trader::futuOpenApiCommand::cancelOrder) !=
-         commands.end());
-  assert(std::find(commands.begin(), commands.end(), futu_trader::futuOpenApiCommand::getOrderList) !=
-         commands.end());
-  assert(std::find(commands.begin(), commands.end(), futu_trader::futuOpenApiCommand::subscribe) !=
-         commands.end());
-  assert(std::find(commands.begin(), commands.end(),
-                   futu_trader::futuOpenApiCommand::getSecuritySnapshot) != commands.end());
-  assert(std::find(commands.begin(), commands.end(), futu_trader::futuOpenApiCommand::getKl) !=
-         commands.end());
+  const auto assertCommandPresent = [&commands](int command) {
+    assert(std::find(commands.begin(), commands.end(), command) != commands.end());
+  };
+  assertCommandPresent(futu_trader::futuOpenApiCommand::initConnect);
+  assertCommandPresent(futu_trader::futuOpenApiCommand::unlockTrade);
+  assertCommandPresent(futu_trader::futuOpenApiCommand::placeOrder);
+  assertCommandPresent(futu_trader::futuOpenApiCommand::modifyOrder);
+  assertCommandPresent(futu_trader::futuOpenApiCommand::cancelOrder);
+  assertCommandPresent(futu_trader::futuOpenApiCommand::getOrderList);
+  assertCommandPresent(futu_trader::futuOpenApiCommand::subscribe);
+  assertCommandPresent(futu_trader::futuOpenApiCommand::getSecuritySnapshot);
+  assertCommandPresent(futu_trader::futuOpenApiCommand::getKl);
   return 0;
 }

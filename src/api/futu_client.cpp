@@ -141,7 +141,6 @@ std::optional<Tick> FutuClient::getBasicQot(const std::string& symbol) const {
 }
 
 std::vector<Tick> FutuClient::getKl(const std::string& symbol, std::size_t bars) const {
-  std::scoped_lock lock(mu_);
   if (config_.apiInvoker) {
     std::ostringstream payload;
     payload << "symbol=" << symbol << ";bars=" << bars;

@@ -13,7 +13,7 @@ namespace futu_trader {
 struct FutuClientConfig {
   std::string host{"127.0.0.1"};
   int port{11111};
-  int heartbeatIntervalSec{10};
+  int heartbeatIntervalSeconds{10};
   int reconnectMaxAttempts{5};
 };
 

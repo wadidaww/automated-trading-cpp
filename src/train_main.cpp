@@ -4,7 +4,7 @@
 
 int main() {
   std::filesystem::create_directories("data/models");
-  std::ofstream out("data/models/trainedModel.bin", std::ios::binary);
+  std::ofstream out("data/models/trained_model.bin", std::ios::binary);
   out << "trained-model";
   std::cout << "training completed\n";
   return 0;

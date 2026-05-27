@@ -41,10 +41,19 @@ bool GradientBoostingModel::Save(const std::string& path) const {
 
 GradientBoostingModel GradientBoostingModel::Load(const std::string& path) {
   std::ifstream in(path, std::ios::binary);
+  if (!in.is_open()) {
+    return GradientBoostingModel({});
+  }
   std::uint64_t size = 0;
   in.read(reinterpret_cast<char*>(&size), sizeof(size));
+  if (!in) {
+    return GradientBoostingModel({});
+  }
   std::vector<double> weights(size, 0.0);
   in.read(reinterpret_cast<char*>(weights.data()), static_cast<std::streamsize>(sizeof(double) * size));
+  if (!in) {
+    return GradientBoostingModel({});
+  }
   return GradientBoostingModel(std::move(weights));
 }
 

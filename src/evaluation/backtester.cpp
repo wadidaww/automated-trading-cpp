@@ -14,6 +14,9 @@ BacktestMetrics Backtester::Run(const std::vector<Tick>& ticks, const ISignalMod
   double peak = 1.0;
   std::size_t wins = 0;
   for (std::size_t i = 1; i < ticks.size(); ++i) {
+    if (ticks[i - 1].price_minor == 0) {
+      continue;
+    }
     const double ret = static_cast<double>(ticks[i].price_minor - ticks[i - 1].price_minor) /
                        static_cast<double>(ticks[i - 1].price_minor);
     const Signal s = model.Predict({ret});

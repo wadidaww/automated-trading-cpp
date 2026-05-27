@@ -9,6 +9,8 @@ on:
 jobs:
   paper-trade:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - run: docker compose up -d mock-opend

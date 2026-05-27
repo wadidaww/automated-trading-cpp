@@ -1,5 +1,6 @@
 #include "futu_trader/data/data_normalizer.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
 
@@ -11,7 +12,8 @@ double DataNormalizer::RSI(const std::vector<double>& close, std::size_t period)
   }
   double gain = 0.0;
   double loss = 0.0;
-  for (std::size_t i = close.size() - period; i < close.size(); ++i) {
+  const std::size_t start = close.size() - period;
+  for (std::size_t i = std::max<std::size_t>(1, start); i < close.size(); ++i) {
     const double delta = close[i] - close[i - 1];
     if (delta >= 0) {
       gain += delta;

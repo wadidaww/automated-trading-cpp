@@ -1,13 +1,19 @@
 #include "futu_trader/utils/config.hpp"
 
+#include <cerrno>
+#include <cstring>
 #include <fstream>
-#include <sstream>
+#include <iostream>
 
 namespace futu_trader {
 
 std::unordered_map<std::string, std::string> Config::ParseSimpleYaml(const std::string& path) {
   std::unordered_map<std::string, std::string> kv;
   std::ifstream in(path);
+  if (!in.is_open()) {
+    std::cerr << "Failed to open config file: " << path << " (" << std::strerror(errno) << ")\n";
+    return kv;
+  }
   std::string line;
   while (std::getline(in, line)) {
     const auto pos = line.find(':');

@@ -18,6 +18,9 @@ import json
 from pathlib import Path
 report = json.loads(Path("data/processed/backtest_report.json").read_text())
 if report["sharpe"] < 0.5 or report["max_drawdown"] > 0.25:
-    raise SystemExit("Backtest thresholds failed")
+    raise SystemExit(
+        f"Backtest thresholds failed: sharpe={report['sharpe']}, "
+        f"max_drawdown={report['max_drawdown']}"
+    )
 print("Backtest thresholds passed")
 PY

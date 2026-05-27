@@ -39,9 +39,12 @@ PipelineMetrics TradingPipeline::Metrics() const {
 }
 
 void TradingPipeline::Worker() {
-  while (running_.load() || !queue_.empty()) {
+  while (true) {
     std::unique_lock lock(mu_);
     cv_.wait(lock, [&] { return !running_.load() || !queue_.empty(); });
+    if (!running_.load() && queue_.empty()) {
+      break;
+    }
     if (queue_.empty()) {
       continue;
     }

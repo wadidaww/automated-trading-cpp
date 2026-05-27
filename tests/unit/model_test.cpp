@@ -14,7 +14,7 @@ int main() {
   const auto sig = gb.Predict({1.0, 0.0});
   assert(sig.action == futu_trader::SignalAction::kBuy || sig.action == futu_trader::SignalAction::kHold);
 
-  const std::string path = "/tmp/gb_model_test.bin";
+  const std::string path = (std::filesystem::temp_directory_path() / "gb_model_test.bin").string();
   assert(gb.Save(path));
   auto gb2 = futu_trader::GradientBoostingModel::Load(path);
   assert(gb2.Predict({1.0, 0.0}).action == gb.Predict({1.0, 0.0}).action);

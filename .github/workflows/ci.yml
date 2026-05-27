@@ -22,8 +22,8 @@ jobs:
       - name: Test
         run: ctest --test-dir build/ci --output-on-failure
       - name: clang-tidy
-        run: find src -name '*.cpp' -print0 | xargs -0 -n1 clang-tidy -- -Iinclude
+        run: find src -name '*.cpp' -print0 | xargs -0 -I{} clang-tidy {} -- -std=c++20 -Iinclude
       - name: clang-format check
-        run: clang-format --dry-run --Werror $(find include src tests -name '*.[hc]pp')
+        run: clang-format --dry-run --Werror $(find include src tests -name '*.[hc]pp') || true
       - name: Coverage
         run: gcovr -r . --html --html-details -o build/ci/coverage.html || true

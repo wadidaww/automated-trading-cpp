@@ -8,17 +8,17 @@ namespace futu_trader {
 
 struct TrainingMetrics {
   double sharpe{0.0};
-  double max_drawdown{0.0};
+  double maxDrawdown{0.0};
   double precision{0.0};
   double recall{0.0};
 };
 
 class ModelTrainer {
  public:
-  GradientBoostingModel Train(const std::vector<FeatureVector>& features,
+  GradientBoostingModel train(const std::vector<FeatureVector>& features,
                               const std::vector<int>& labels) const;
-  TrainingMetrics Evaluate(const std::vector<double>& pnl, int true_positive, int false_positive,
-                           int false_negative) const;
+  TrainingMetrics evaluate(const std::vector<double>& pnl, int truePositive, int falsePositive,
+                           int falseNegative) const;
 };
 
 }  // namespace futu_trader

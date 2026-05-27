@@ -9,7 +9,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   futu_trader::FutuClient client({});
-  client.Connect();
+  client.connect();
   std::cout << "futu_trader running\n";
   return 0;
 }

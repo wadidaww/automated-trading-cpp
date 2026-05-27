@@ -13,10 +13,10 @@ class OrderManager {
  public:
   explicit OrderManager(FutuClient& client);
 
-  bool Submit(Order order);
-  bool Cancel(const std::string& order_id);
-  bool Modify(const std::string& order_id, Money new_price_minor, std::int64_t new_quantity);
-  OrderState State(const std::string& order_id) const;
+  bool submit(Order order);
+  bool cancel(const std::string& orderId);
+  bool modify(const std::string& orderId, Money newPriceMinor, std::int64_t newQuantity);
+  OrderState state(const std::string& orderId) const;
 
  private:
   FutuClient& client_;

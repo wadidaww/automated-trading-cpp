@@ -13,8 +13,8 @@ namespace futu_trader {
 struct FutuClientConfig {
   std::string host{"127.0.0.1"};
   int port{11111};
-  int heartbeat_interval_s{10};
-  int reconnect_max_attempts{5};
+  int heartbeatIntervalSec{10};
+  int reconnectMaxAttempts{5};
 };
 
 /** Futu OpenAPI client abstraction. */
@@ -22,19 +22,19 @@ class FutuClient {
  public:
   explicit FutuClient(FutuClientConfig config);
 
-  bool Connect();
-  void Disconnect();
-  bool IsConnected() const;
+  bool connect();
+  void disconnect();
+  bool isConnected() const;
 
-  std::string InitConnect();
-  std::string PlaceOrder(const Order& order);
-  bool ModifyOrder(const std::string& order_id, Money new_price_minor, std::int64_t new_quantity);
-  bool CancelOrder(const std::string& order_id);
-  std::vector<Order> GetOrderList() const;
+  std::string initConnect();
+  std::string placeOrder(const Order& order);
+  bool modifyOrder(const std::string& orderId, Money newPriceMinor, std::int64_t newQuantity);
+  bool cancelOrder(const std::string& orderId);
+  std::vector<Order> getOrderList() const;
 
-  std::optional<Tick> GetBasicQot(const std::string& symbol) const;
-  std::vector<Tick> GetKL(const std::string& symbol, std::size_t bars) const;
-  bool Subscribe(const std::string& symbol);
+  std::optional<Tick> getBasicQot(const std::string& symbol) const;
+  std::vector<Tick> getKl(const std::string& symbol, std::size_t bars) const;
+  bool subscribe(const std::string& symbol);
 
  private:
   FutuClientConfig config_;

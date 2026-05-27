@@ -4,49 +4,49 @@ namespace futu_trader {
 
 OrderManager::OrderManager(FutuClient& client) : client_(client) {}
 
-bool OrderManager::Submit(Order order) {
+bool OrderManager::submit(Order order) {
   std::scoped_lock lock(mu_);
-  if (!order.idempotency_key.empty() && dedupe_.contains(order.idempotency_key)) {
+  if (!order.idempotencyKey.empty() && dedupe_.contains(order.idempotencyKey)) {
     return false;
   }
-  client_.PlaceOrder(order);
+  client_.placeOrder(order);
   order.state = OrderState::kSubmitted;
-  if (!order.idempotency_key.empty()) {
-    dedupe_[order.idempotency_key] = order.order_id;
+  if (!order.idempotencyKey.empty()) {
+    dedupe_[order.idempotencyKey] = order.orderId;
   }
-  orders_[order.order_id] = order;
+  orders_[order.orderId] = order;
   return true;
 }
 
-bool OrderManager::Cancel(const std::string& order_id) {
+bool OrderManager::cancel(const std::string& orderId) {
   std::scoped_lock lock(mu_);
-  if (!orders_.contains(order_id)) {
+  if (!orders_.contains(orderId)) {
     return false;
   }
-  if (!client_.CancelOrder(order_id)) {
+  if (!client_.cancelOrder(orderId)) {
     return false;
   }
-  orders_[order_id].state = OrderState::kCancelled;
+  orders_[orderId].state = OrderState::kCancelled;
   return true;
 }
 
-bool OrderManager::Modify(const std::string& order_id, Money new_price_minor,
-                          std::int64_t new_quantity) {
+bool OrderManager::modify(const std::string& orderId, Money newPriceMinor,
+                          std::int64_t newQuantity) {
   std::scoped_lock lock(mu_);
-  if (!orders_.contains(order_id)) {
+  if (!orders_.contains(orderId)) {
     return false;
   }
-  if (!client_.ModifyOrder(order_id, new_price_minor, new_quantity)) {
+  if (!client_.modifyOrder(orderId, newPriceMinor, newQuantity)) {
     return false;
   }
-  orders_[order_id].limit_price_minor = new_price_minor;
-  orders_[order_id].quantity = new_quantity;
+  orders_[orderId].limitPriceMinor = newPriceMinor;
+  orders_[orderId].quantity = newQuantity;
   return true;
 }
 
-OrderState OrderManager::State(const std::string& order_id) const {
+OrderState OrderManager::state(const std::string& orderId) const {
   std::scoped_lock lock(mu_);
-  auto it = orders_.find(order_id);
+  auto it = orders_.find(orderId);
   if (it == orders_.end()) {
     return OrderState::kRejected;
   }

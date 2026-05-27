@@ -3,19 +3,19 @@
 namespace futu_trader {
 
 TradingPipeline::TradingPipeline(std::shared_ptr<ISignalModel> model, RiskEngine& risk,
-                                 OrderManager& order_manager)
-    : model_(std::move(model)), risk_(risk), order_manager_(order_manager) {}
+                                 OrderManager& orderManager)
+    : model_(std::move(model)), risk_(risk), order_manager_(orderManager) {}
 
-TradingPipeline::~TradingPipeline() { Stop(); }
+TradingPipeline::~TradingPipeline() { stop(); }
 
-void TradingPipeline::Start() {
+void TradingPipeline::start() {
   if (running_.exchange(true)) {
     return;
   }
-  worker_ = std::thread(&TradingPipeline::Worker, this);
+  worker_ = std::thread(&TradingPipeline::worker, this);
 }
 
-void TradingPipeline::Stop() {
+void TradingPipeline::stop() {
   if (!running_.exchange(false)) {
     return;
   }
@@ -25,7 +25,7 @@ void TradingPipeline::Stop() {
   }
 }
 
-void TradingPipeline::PushTick(const Tick& tick) {
+void TradingPipeline::pushTick(const Tick& tick) {
   {
     std::scoped_lock lock(mu_);
     queue_.push(tick);
@@ -33,12 +33,12 @@ void TradingPipeline::PushTick(const Tick& tick) {
   cv_.notify_one();
 }
 
-PipelineMetrics TradingPipeline::Metrics() const {
+PipelineMetrics TradingPipeline::metrics() const {
   std::scoped_lock lock(mu_);
   return metrics_;
 }
 
-void TradingPipeline::Worker() {
+void TradingPipeline::worker() {
   while (true) {
     std::unique_lock lock(mu_);
     cv_.wait(lock, [&] { return !running_.load() || !queue_.empty(); });
@@ -50,26 +50,26 @@ void TradingPipeline::Worker() {
     }
     Tick tick = queue_.front();
     queue_.pop();
-    ++metrics_.processed_ticks;
+    ++metrics_.processedTicks;
     lock.unlock();
 
-    const FeatureVector features = {static_cast<double>(tick.price_minor) / 10000.0};
-    const Signal signal = model_->Predict(features);
+    const FeatureVector features = {static_cast<double>(tick.priceMinor) / 10000.0};
+    const Signal signal = model_->predict(features);
     if (signal.action == SignalAction::kHold) {
       continue;
     }
     Order order;
-    order.order_id = tick.symbol + "-" + std::to_string(metrics_.processed_ticks);
+    order.orderId = tick.symbol + "-" + std::to_string(metrics_.processedTicks);
     order.symbol = tick.symbol;
     order.quantity = 1;
-    order.limit_price_minor = tick.price_minor;
-    order.idempotency_key = order.order_id;
+    order.limitPriceMinor = tick.priceMinor;
+    order.idempotencyKey = order.orderId;
 
-    const bool allowed = risk_.CanPlace(order, {}, 0, 0, 0);
+    const bool allowed = risk_.canPlace(order, {}, 0, 0, 0);
     if (allowed) {
-      order_manager_.Submit(order);
+      order_manager_.submit(order);
       std::scoped_lock guard(mu_);
-      ++metrics_.generated_signals;
+      ++metrics_.generatedSignals;
     }
   }
 }

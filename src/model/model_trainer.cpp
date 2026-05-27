@@ -6,7 +6,7 @@
 
 namespace futu_trader {
 
-GradientBoostingModel ModelTrainer::Train(const std::vector<FeatureVector>& features,
+GradientBoostingModel ModelTrainer::train(const std::vector<FeatureVector>& features,
                                           const std::vector<int>& labels) const {
   if (features.empty() || labels.empty()) {
     return GradientBoostingModel({});
@@ -26,8 +26,8 @@ GradientBoostingModel ModelTrainer::Train(const std::vector<FeatureVector>& feat
   return GradientBoostingModel(std::move(weights));
 }
 
-TrainingMetrics ModelTrainer::Evaluate(const std::vector<double>& pnl, int true_positive,
-                                       int false_positive, int false_negative) const {
+TrainingMetrics ModelTrainer::evaluate(const std::vector<double>& pnl, int truePositive,
+                                       int falsePositive, int falseNegative) const {
   TrainingMetrics m;
   if (!pnl.empty()) {
     const double mean = std::accumulate(pnl.begin(), pnl.end(), 0.0) / static_cast<double>(pnl.size());
@@ -44,16 +44,16 @@ TrainingMetrics ModelTrainer::Evaluate(const std::vector<double>& pnl, int true_
       equity += r;
       peak = std::max(peak, equity);
       if (peak > 0.0) {
-        m.max_drawdown = std::max(m.max_drawdown, (peak - equity) / peak);
+        m.maxDrawdown = std::max(m.maxDrawdown, (peak - equity) / peak);
       }
     }
   }
-  m.precision = (true_positive + false_positive) == 0
+  m.precision = (truePositive + falsePositive) == 0
                     ? 0.0
-                    : static_cast<double>(true_positive) / (true_positive + false_positive);
-  m.recall = (true_positive + false_negative) == 0
+                    : static_cast<double>(truePositive) / (truePositive + falsePositive);
+  m.recall = (truePositive + falseNegative) == 0
                  ? 0.0
-                 : static_cast<double>(true_positive) / (true_positive + false_negative);
+                 : static_cast<double>(truePositive) / (truePositive + falseNegative);
   return m;
 }
 

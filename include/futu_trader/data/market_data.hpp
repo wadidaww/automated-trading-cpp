@@ -13,12 +13,12 @@ namespace futu_trader {
 
 class DataStore {
  public:
-  explicit DataStore(std::size_t max_size);
-  void Push(const Tick& tick);
-  std::vector<Tick> Snapshot() const;
+  explicit DataStore(std::size_t maxSize);
+  void push(const Tick& tick);
+  std::vector<Tick> snapshot() const;
 
  private:
-  std::size_t max_size_;
+  std::size_t maxSize_;
   mutable std::mutex mu_;
   std::deque<Tick> ticks_;
 };
@@ -26,8 +26,8 @@ class DataStore {
 class MarketDataFeed {
  public:
   explicit MarketDataFeed(FutuClient& client);
-  bool Subscribe(const std::string& symbol);
-  std::optional<Tick> Poll(const std::string& symbol) const;
+  bool subscribe(const std::string& symbol);
+  std::optional<Tick> poll(const std::string& symbol) const;
 
  private:
   FutuClient& client_;
@@ -36,7 +36,7 @@ class MarketDataFeed {
 class HistoricalDataFetcher {
  public:
   explicit HistoricalDataFetcher(FutuClient& client);
-  std::vector<Tick> Fetch(const std::string& symbol, std::size_t bars) const;
+  std::vector<Tick> fetch(const std::string& symbol, std::size_t bars) const;
 
  private:
   FutuClient& client_;

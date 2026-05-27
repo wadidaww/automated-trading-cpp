@@ -7,7 +7,7 @@
 
 namespace futu_trader {
 
-std::unordered_map<std::string, std::string> Config::ParseSimpleYaml(const std::string& path) {
+std::unordered_map<std::string, std::string> Config::parseSimpleYaml(const std::string& path) {
   std::unordered_map<std::string, std::string> kv;
   std::ifstream in(path);
   if (!in.is_open()) {

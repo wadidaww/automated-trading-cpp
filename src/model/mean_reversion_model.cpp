@@ -2,18 +2,18 @@
 
 namespace futu_trader {
 
-MeanReversionModel::MeanReversionModel(double buy_threshold, double sell_threshold)
-    : buy_threshold_(buy_threshold), sell_threshold_(sell_threshold) {}
+MeanReversionModel::MeanReversionModel(double buyThreshold, double sellThreshold)
+    : buy_threshold_(buyThreshold), sell_threshold_(sellThreshold) {}
 
-Signal MeanReversionModel::Predict(const FeatureVector& features) const {
+Signal MeanReversionModel::predict(const FeatureVector& features) const {
   if (features.empty()) {
     return {SignalAction::kHold, 0.0};
   }
-  const double z_score = features.front();
-  if (z_score <= buy_threshold_) {
+  const double zScore = features.front();
+  if (zScore <= buy_threshold_) {
     return {SignalAction::kBuy, 0.8};
   }
-  if (z_score >= sell_threshold_) {
+  if (zScore >= sell_threshold_) {
     return {SignalAction::kSell, 0.8};
   }
   return {SignalAction::kHold, 0.5};

@@ -10,10 +10,10 @@ namespace futu_trader {
 class GradientBoostingModel : public ISignalModel {
  public:
   explicit GradientBoostingModel(std::vector<double> weights);
-  Signal Predict(const FeatureVector& features) const override;
+  Signal predict(const FeatureVector& features) const override;
 
-  bool Save(const std::string& path) const;
-  static GradientBoostingModel Load(const std::string& path);
+  bool save(const std::string& path) const;
+  static GradientBoostingModel load(const std::string& path);
 
  private:
   std::vector<double> weights_;

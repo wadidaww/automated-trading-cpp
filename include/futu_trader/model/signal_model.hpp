@@ -7,7 +7,7 @@ namespace futu_trader {
 class ISignalModel {
  public:
   virtual ~ISignalModel() = default;
-  virtual Signal Predict(const FeatureVector& features) const = 0;
+  virtual Signal predict(const FeatureVector& features) const = 0;
 };
 
 }  // namespace futu_trader

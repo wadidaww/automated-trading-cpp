@@ -10,13 +10,13 @@ namespace futu_trader {
 
 class PositionTracker {
  public:
-  void OnFill(const std::string& symbol, std::int64_t quantity, Money fill_price_minor);
-  Money PositionNotional(const std::string& symbol, Money mark_price_minor) const;
-  std::unordered_map<std::string, std::int64_t> Quantities() const;
+  void onFill(const std::string& symbol, std::int64_t quantity, Money fillPriceMinor);
+  Money positionNotional(const std::string& symbol, Money markPriceMinor) const;
+  std::unordered_map<std::string, std::int64_t> quantities() const;
 
  private:
   mutable std::mutex mu_;
-  std::unordered_map<std::string, std::int64_t> qty_by_symbol_;
+  std::unordered_map<std::string, std::int64_t> qtyBySymbol_;
 };
 
 }  // namespace futu_trader

@@ -6,7 +6,7 @@
 
 namespace futu_trader {
 
-double DataNormalizer::RSI(const std::vector<double>& close, std::size_t period) {
+double DataNormalizer::rsi(const std::vector<double>& close, std::size_t period) {
   if (close.size() <= period || period == 0) {
     return 50.0;
   }
@@ -28,7 +28,7 @@ double DataNormalizer::RSI(const std::vector<double>& close, std::size_t period)
   return 100.0 - (100.0 / (1.0 + rs));
 }
 
-std::vector<double> DataNormalizer::MACD(const std::vector<double>& close, std::size_t fast,
+std::vector<double> DataNormalizer::macd(const std::vector<double>& close, std::size_t fast,
                                          std::size_t slow) {
   if (close.empty() || fast == 0 || slow == 0) {
     return {0.0, 0.0};
@@ -41,14 +41,14 @@ std::vector<double> DataNormalizer::MACD(const std::vector<double>& close, std::
     }
     return value;
   };
-  const double fast_ema = ema(fast);
-  const double slow_ema = ema(slow);
-  const double macd = fast_ema - slow_ema;
+  const double fastEma = ema(fast);
+  const double slowEma = ema(slow);
+  const double macd = fastEma - slowEma;
   return {macd, macd * 0.8};
 }
 
-std::pair<double, double> DataNormalizer::Bollinger(const std::vector<double>& close, std::size_t period,
-                                                    double stddev_mult) {
+std::pair<double, double> DataNormalizer::bollinger(const std::vector<double>& close, std::size_t period,
+                                                    double stddevMult) {
   if (close.size() < period || period == 0) {
     return {0.0, 0.0};
   }
@@ -60,10 +60,10 @@ std::pair<double, double> DataNormalizer::Bollinger(const std::vector<double>& c
     sq += d * d;
   }
   const double stddev = std::sqrt(sq / static_cast<double>(period));
-  return {mean - stddev_mult * stddev, mean + stddev_mult * stddev};
+  return {mean - stddevMult * stddev, mean + stddevMult * stddev};
 }
 
-double DataNormalizer::VWAP(const std::vector<double>& price, const std::vector<double>& volume) {
+double DataNormalizer::vwap(const std::vector<double>& price, const std::vector<double>& volume) {
   if (price.size() != volume.size() || price.empty()) {
     return 0.0;
   }
@@ -76,7 +76,7 @@ double DataNormalizer::VWAP(const std::vector<double>& price, const std::vector<
   return vol == 0.0 ? 0.0 : pv / vol;
 }
 
-double DataNormalizer::OBV(const std::vector<double>& close, const std::vector<double>& volume) {
+double DataNormalizer::obv(const std::vector<double>& close, const std::vector<double>& volume) {
   if (close.size() != volume.size() || close.empty()) {
     return 0.0;
   }
@@ -91,7 +91,7 @@ double DataNormalizer::OBV(const std::vector<double>& close, const std::vector<d
   return obv;
 }
 
-double DataNormalizer::RollingZScore(const std::vector<double>& values) {
+double DataNormalizer::rollingZScore(const std::vector<double>& values) {
   if (values.size() < 2) {
     return 0.0;
   }

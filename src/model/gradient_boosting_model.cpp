@@ -8,7 +8,7 @@ namespace futu_trader {
 GradientBoostingModel::GradientBoostingModel(std::vector<double> weights)
     : weights_(std::move(weights)) {}
 
-Signal GradientBoostingModel::Predict(const FeatureVector& features) const {
+Signal GradientBoostingModel::predict(const FeatureVector& features) const {
   if (weights_.empty() || features.empty()) {
     return {SignalAction::kHold, 0.0};
   }
@@ -27,7 +27,7 @@ Signal GradientBoostingModel::Predict(const FeatureVector& features) const {
   return {SignalAction::kHold, confidence};
 }
 
-bool GradientBoostingModel::Save(const std::string& path) const {
+bool GradientBoostingModel::save(const std::string& path) const {
   std::ofstream out(path, std::ios::binary);
   if (!out) {
     return false;
@@ -39,7 +39,7 @@ bool GradientBoostingModel::Save(const std::string& path) const {
   return static_cast<bool>(out);
 }
 
-GradientBoostingModel GradientBoostingModel::Load(const std::string& path) {
+GradientBoostingModel GradientBoostingModel::load(const std::string& path) {
   std::ifstream in(path, std::ios::binary);
   if (!in.is_open()) {
     return GradientBoostingModel({});

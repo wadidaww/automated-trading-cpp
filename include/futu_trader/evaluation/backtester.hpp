@@ -8,17 +8,17 @@
 namespace futu_trader {
 
 struct BacktestMetrics {
-  double total_return{0.0};
-  double annualized_return{0.0};
-  double annualized_volatility{0.0};
+  double totalReturn{0.0};
+  double annualizedReturn{0.0};
+  double annualizedVolatility{0.0};
   double sharpe{0.0};
-  double max_drawdown{0.0};
-  double win_rate{0.0};
+  double maxDrawdown{0.0};
+  double winRate{0.0};
 };
 
 class Backtester {
  public:
-  BacktestMetrics Run(const std::vector<Tick>& ticks, const ISignalModel& model) const;
+  BacktestMetrics run(const std::vector<Tick>& ticks, const ISignalModel& model) const;
 };
 
 }  // namespace futu_trader

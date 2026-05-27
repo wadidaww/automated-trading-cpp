@@ -2,12 +2,12 @@
 
 namespace futu_trader {
 
-void ModelRegistry::SetModel(std::shared_ptr<ISignalModel> model) {
+void ModelRegistry::setModel(std::shared_ptr<ISignalModel> model) {
   std::scoped_lock lock(mu_);
   model_ = std::move(model);
 }
 
-std::shared_ptr<ISignalModel> ModelRegistry::GetModel() const {
+std::shared_ptr<ISignalModel> ModelRegistry::getModel() const {
   std::scoped_lock lock(mu_);
   return model_;
 }

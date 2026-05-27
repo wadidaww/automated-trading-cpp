@@ -10,8 +10,8 @@ namespace futu_trader {
 
 class ModelRegistry {
  public:
-  void SetModel(std::shared_ptr<ISignalModel> model);
-  std::shared_ptr<ISignalModel> GetModel() const;
+  void setModel(std::shared_ptr<ISignalModel> model);
+  std::shared_ptr<ISignalModel> getModel() const;
 
  private:
   mutable std::mutex mu_;

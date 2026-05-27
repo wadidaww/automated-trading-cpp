@@ -20,7 +20,7 @@ struct Signal {
 
 struct Tick {
   std::string symbol;
-  Money price_minor{0};
+  Money priceMinor{0};
   std::int64_t volume{0};
   TimePoint timestamp{};
 };
@@ -29,19 +29,19 @@ enum class OrderType { kMarket, kLimit, kStopLimit, kTrailingStop };
 enum class OrderState { kPending, kSubmitted, kPartialFill, kFilled, kCancelled, kRejected };
 
 struct Order {
-  std::string order_id;
+  std::string orderId;
   std::string symbol;
   std::int64_t quantity{0};
-  Money limit_price_minor{0};
+  Money limitPriceMinor{0};
   OrderType type{OrderType::kLimit};
   OrderState state{OrderState::kPending};
-  std::string idempotency_key;
+  std::string idempotencyKey;
 };
 
 struct TradeSignal {
   std::string symbol;
   Signal signal;
-  std::int64_t suggested_quantity{0};
+  std::int64_t suggestedQuantity{0};
   TimePoint timestamp{};
 };
 

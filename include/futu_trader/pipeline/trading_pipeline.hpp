@@ -16,22 +16,22 @@
 namespace futu_trader {
 
 struct PipelineMetrics {
-  std::size_t processed_ticks{0};
-  std::size_t generated_signals{0};
+  std::size_t processedTicks{0};
+  std::size_t generatedSignals{0};
 };
 
 class TradingPipeline {
  public:
-  TradingPipeline(std::shared_ptr<ISignalModel> model, RiskEngine& risk, OrderManager& order_manager);
+  TradingPipeline(std::shared_ptr<ISignalModel> model, RiskEngine& risk, OrderManager& orderManager);
   ~TradingPipeline();
 
-  void Start();
-  void Stop();
-  void PushTick(const Tick& tick);
-  PipelineMetrics Metrics() const;
+  void start();
+  void stop();
+  void pushTick(const Tick& tick);
+  PipelineMetrics metrics() const;
 
  private:
-  void Worker();
+  void worker();
 
   std::shared_ptr<ISignalModel> model_;
   RiskEngine& risk_;

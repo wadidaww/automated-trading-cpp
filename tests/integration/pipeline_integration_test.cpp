@@ -10,17 +10,17 @@
 
 int main() {
   futu_trader::FutuClient client({});
-  client.Connect();
+  client.connect();
   futu_trader::OrderManager om(client);
   futu_trader::RiskEngine risk({1000000, 1000000, 100000, 100, 1.0});
   auto model = std::make_shared<futu_trader::MeanReversionModel>(-0.5, 0.5);
 
   futu_trader::TradingPipeline pipeline(model, risk, om);
-  pipeline.Start();
-  pipeline.PushTick({"AAPL.US", 12000, 100, std::chrono::system_clock::now()});
+  pipeline.start();
+  pipeline.pushTick({"AAPL.US", 12000, 100, std::chrono::system_clock::now()});
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  pipeline.Stop();
+  pipeline.stop();
 
-  assert(pipeline.Metrics().processed_ticks >= 1);
+  assert(pipeline.metrics().processedTicks >= 1);
   return 0;
 }

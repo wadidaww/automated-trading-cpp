@@ -2,23 +2,23 @@
 
 namespace futu_trader {
 
-void PositionTracker::OnFill(const std::string& symbol, std::int64_t quantity, Money) {
+void PositionTracker::onFill(const std::string& symbol, std::int64_t quantity, Money) {
   std::scoped_lock lock(mu_);
-  qty_by_symbol_[symbol] += quantity;
+  qtyBySymbol_[symbol] += quantity;
 }
 
-Money PositionTracker::PositionNotional(const std::string& symbol, Money mark_price_minor) const {
+Money PositionTracker::positionNotional(const std::string& symbol, Money markPriceMinor) const {
   std::scoped_lock lock(mu_);
-  const auto it = qty_by_symbol_.find(symbol);
-  if (it == qty_by_symbol_.end()) {
+  const auto it = qtyBySymbol_.find(symbol);
+  if (it == qtyBySymbol_.end()) {
     return 0;
   }
-  return static_cast<Money>(it->second) * mark_price_minor;
+  return static_cast<Money>(it->second) * markPriceMinor;
 }
 
-std::unordered_map<std::string, std::int64_t> PositionTracker::Quantities() const {
+std::unordered_map<std::string, std::int64_t> PositionTracker::quantities() const {
   std::scoped_lock lock(mu_);
-  return qty_by_symbol_;
+  return qtyBySymbol_;
 }
 
 }  // namespace futu_trader

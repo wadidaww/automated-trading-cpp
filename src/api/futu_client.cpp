@@ -6,46 +6,46 @@ namespace futu_trader {
 
 FutuClient::FutuClient(FutuClientConfig config) : config_(std::move(config)) {}
 
-bool FutuClient::Connect() {
+bool FutuClient::connect() {
   std::scoped_lock lock(mu_);
   connected_ = true;
   return true;
 }
 
-void FutuClient::Disconnect() {
+void FutuClient::disconnect() {
   std::scoped_lock lock(mu_);
   connected_ = false;
 }
 
-bool FutuClient::IsConnected() const {
+bool FutuClient::isConnected() const {
   std::scoped_lock lock(mu_);
   return connected_;
 }
 
-std::string FutuClient::InitConnect() { return IsConnected() ? "connected" : "disconnected"; }
+std::string FutuClient::initConnect() { return isConnected() ? "connected" : "disconnected"; }
 
-std::string FutuClient::PlaceOrder(const Order& order) {
+std::string FutuClient::placeOrder(const Order& order) {
   std::scoped_lock lock(mu_);
-  orders_[order.order_id] = order;
-  orders_[order.order_id].state = OrderState::kSubmitted;
-  return order.order_id;
+  orders_[order.orderId] = order;
+  orders_[order.orderId].state = OrderState::kSubmitted;
+  return order.orderId;
 }
 
-bool FutuClient::ModifyOrder(const std::string& order_id, Money new_price_minor,
-                             std::int64_t new_quantity) {
+bool FutuClient::modifyOrder(const std::string& orderId, Money newPriceMinor,
+                             std::int64_t newQuantity) {
   std::scoped_lock lock(mu_);
-  auto it = orders_.find(order_id);
+  auto it = orders_.find(orderId);
   if (it == orders_.end()) {
     return false;
   }
-  it->second.limit_price_minor = new_price_minor;
-  it->second.quantity = new_quantity;
+  it->second.limitPriceMinor = newPriceMinor;
+  it->second.quantity = newQuantity;
   return true;
 }
 
-bool FutuClient::CancelOrder(const std::string& order_id) {
+bool FutuClient::cancelOrder(const std::string& orderId) {
   std::scoped_lock lock(mu_);
-  auto it = orders_.find(order_id);
+  auto it = orders_.find(orderId);
   if (it == orders_.end()) {
     return false;
   }
@@ -53,7 +53,7 @@ bool FutuClient::CancelOrder(const std::string& order_id) {
   return true;
 }
 
-std::vector<Order> FutuClient::GetOrderList() const {
+std::vector<Order> FutuClient::getOrderList() const {
   std::scoped_lock lock(mu_);
   std::vector<Order> out;
   out.reserve(orders_.size());
@@ -63,7 +63,7 @@ std::vector<Order> FutuClient::GetOrderList() const {
   return out;
 }
 
-std::optional<Tick> FutuClient::GetBasicQot(const std::string& symbol) const {
+std::optional<Tick> FutuClient::getBasicQot(const std::string& symbol) const {
   std::scoped_lock lock(mu_);
   auto it = last_ticks_.find(symbol);
   if (it == last_ticks_.end()) {
@@ -72,7 +72,7 @@ std::optional<Tick> FutuClient::GetBasicQot(const std::string& symbol) const {
   return it->second;
 }
 
-std::vector<Tick> FutuClient::GetKL(const std::string& symbol, std::size_t bars) const {
+std::vector<Tick> FutuClient::getKl(const std::string& symbol, std::size_t bars) const {
   std::vector<Tick> ticks;
   ticks.reserve(bars);
   for (std::size_t i = 0; i < bars; ++i) {
@@ -84,7 +84,7 @@ std::vector<Tick> FutuClient::GetKL(const std::string& symbol, std::size_t bars)
   return ticks;
 }
 
-bool FutuClient::Subscribe(const std::string& symbol) {
+bool FutuClient::subscribe(const std::string& symbol) {
   std::scoped_lock lock(mu_);
   last_ticks_[symbol] = Tick{symbol, 10000, 100, std::chrono::system_clock::now()};
   return true;

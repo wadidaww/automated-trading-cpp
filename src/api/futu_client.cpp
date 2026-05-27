@@ -141,10 +141,15 @@ std::optional<Tick> FutuClient::getBasicQot(const std::string& symbol) const {
 }
 
 std::vector<Tick> FutuClient::getKl(const std::string& symbol, std::size_t bars) const {
-  if (config_.apiInvoker) {
+  FutuOpenApiInvoker invoker;
+  {
+    std::scoped_lock lock(mu_);
+    invoker = config_.apiInvoker;
+  }
+  if (invoker) {
     std::ostringstream payload;
     payload << "symbol=" << symbol << ";bars=" << bars;
-    (void)callOpenApi(futuOpenApiCommand::getKl, payload.str());
+    (void)invoker(futuOpenApiCommand::getKl, payload.str());
   }
   std::vector<Tick> ticks;
   ticks.reserve(bars);

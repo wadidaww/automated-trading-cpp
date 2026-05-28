@@ -11,7 +11,7 @@ using Money = std::int64_t;
 using TimePoint = std::chrono::system_clock::time_point;
 using FeatureVector = std::vector<double>;
 
-enum class SignalAction { kBuy, kSell, kHold };
+enum class SignalAction : uint8_t { kBuy, kSell, kHold };
 
 struct Signal {
   SignalAction action{SignalAction::kHold};
@@ -25,8 +25,15 @@ struct Tick {
   TimePoint timestamp{};
 };
 
-enum class OrderType { kMarket, kLimit, kStopLimit, kTrailingStop };
-enum class OrderState { kPending, kSubmitted, kPartialFill, kFilled, kCancelled, kRejected };
+enum class OrderType : uint8_t { kMarket, kLimit, kStopLimit, kTrailingStop };
+enum class OrderState : uint8_t {
+  kPending,
+  kSubmitted,
+  kPartialFill,
+  kFilled,
+  kCancelled,
+  kRejected
+};
 
 struct Order {
   std::string orderId;

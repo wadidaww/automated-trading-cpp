@@ -1,0 +1,10 @@
+{
+  "C_Cpp.default.cppStandard": "c++23",
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}/build/dev"
+  ],
+  "C_Cpp.default.compileCommands": [
+    "--compile-commands-dir=${workspaceFolder}/build/dev"
+  ],
+  "makefile.compileCommandsPath": "${workspaceFolder}/build/dev/compile_commands.json"
+}

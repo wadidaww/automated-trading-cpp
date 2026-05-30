@@ -22,7 +22,7 @@ struct Tick {
   std::string symbol;
   Money priceMinor{0};
   std::int64_t volume{0};
-  TimePoint timestamp{};
+  TimePoint timestamp;
 };
 
 enum class OrderType : uint8_t { kMarket, kLimit, kStopLimit, kTrailingStop };
@@ -49,7 +49,7 @@ struct TradeSignal {
   std::string symbol;
   Signal signal;
   std::int64_t suggestedQuantity{0};
-  TimePoint timestamp{};
+  TimePoint timestamp;
 };
 
 }  // namespace futu_trader

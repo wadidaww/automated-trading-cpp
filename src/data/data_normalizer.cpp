@@ -6,7 +6,7 @@
 
 namespace futu_trader {
 
-double DataNormalizer::rsi(const std::vector<double>& close, std::size_t period) {
+auto DataNormalizer::rsi(const std::vector<double>& close, std::size_t period) -> double {
   if (close.size() <= period || period == 0) {
     return 50.0;
   }
@@ -28,8 +28,8 @@ double DataNormalizer::rsi(const std::vector<double>& close, std::size_t period)
   return 100.0 - (100.0 / (1.0 + rs));
 }
 
-std::vector<double> DataNormalizer::macd(const std::vector<double>& close, std::size_t fast,
-                                         std::size_t slow) {
+auto DataNormalizer::macd(const std::vector<double>& close, std::size_t fast,
+                          std::size_t slow) -> std::vector<double> {
   if (close.empty() || fast == 0 || slow == 0) {
     return {0.0, 0.0};
   }
@@ -47,8 +47,8 @@ std::vector<double> DataNormalizer::macd(const std::vector<double>& close, std::
   return {macd, macd * 0.8};
 }
 
-std::pair<double, double> DataNormalizer::bollinger(const std::vector<double>& close, std::size_t period,
-                                                    double stddevMult) {
+auto DataNormalizer::bollinger(const std::vector<double>& close, std::size_t period,
+                               double stddevMult) -> std::pair<double, double> {
   if (close.size() < period || period == 0) {
     return {0.0, 0.0};
   }
@@ -60,7 +60,7 @@ std::pair<double, double> DataNormalizer::bollinger(const std::vector<double>& c
     sq += d * d;
   }
   const double stddev = std::sqrt(sq / static_cast<double>(period));
-  return {mean - stddevMult * stddev, mean + stddevMult * stddev};
+  return {mean - (stddevMult * stddev), mean + (stddevMult * stddev)};
 }
 
 double DataNormalizer::vwap(const std::vector<double>& price, const std::vector<double>& volume) {
@@ -91,7 +91,7 @@ double DataNormalizer::obv(const std::vector<double>& close, const std::vector<d
   return obv;
 }
 
-double DataNormalizer::rollingZScore(const std::vector<double>& values) {
+auto DataNormalizer::rollingZScore(const std::vector<double>& values) -> double {
   if (values.size() < 2) {
     return 0.0;
   }

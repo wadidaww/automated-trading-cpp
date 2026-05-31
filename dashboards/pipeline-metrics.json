@@ -1,0 +1,8 @@
+{
+  "title": "Pipeline Metrics",
+  "panels": [
+    {"type": "graph", "title": "Stage Latency p95"},
+    {"type": "graph", "title": "Throughput"},
+    {"type": "graph", "title": "Queue Depth"}
+  ]
+}

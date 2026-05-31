@@ -1,0 +1,25 @@
+name: backtest
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset dev
+      - run: cmake --build --preset dev
+      - run: ./scripts/fetch_historical_data.sh
+      - run: ./scripts/run_backtest.sh
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-report
+          path: |
+            data/processed/*.json
+            data/processed/*.html

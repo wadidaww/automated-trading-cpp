@@ -167,7 +167,7 @@ bool FutuClient::subscribe(const std::string& symbol) {
   if (config_.apiInvoker && !callOpenApi(futuOpenApiCommand::subscribe, symbol).success) {
     return false;
   }
-  last_ticks_[symbol] = Tick{symbol, 10000, 100, std::chrono::system_clock::now()};
+  last_ticks_[symbol] = Tick{.symbol=symbol, .priceMinor=10000, .volume=100, .timestamp=std::chrono::system_clock::now()};
   return true;
 }
 

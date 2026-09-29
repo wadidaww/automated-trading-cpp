@@ -41,8 +41,8 @@ Environment-specific YAML configs live in `config/`:
 
 ## Model training
 ```bash
-cmake --preset dev
-cmake --build --preset dev
+cmake --preset dev -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build --preset dev -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 ./build/dev/futu_model_train --config config/config.dev.yaml
 ```
 

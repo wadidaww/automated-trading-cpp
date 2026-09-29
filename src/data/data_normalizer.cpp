@@ -95,8 +95,8 @@ auto DataNormalizer::rollingZScore(const std::vector<double>& values) -> double 
   if (values.size() < 2) {
     return 0.0;
   }
-  const double mean = std::accumulate(values.begin(), values.end(), 0.0) /
-                      static_cast<double>(values.size());
+  const double mean =
+      std::accumulate(values.begin(), values.end(), 0.0) / static_cast<double>(values.size());
   double var = 0.0;
   for (double v : values) {
     const double d = v - mean;

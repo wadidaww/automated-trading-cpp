@@ -12,17 +12,31 @@ int main() {
   client.connect();
   futu_trader::OrderManager om(client);
 
-  futu_trader::Order order{"o1", "700.HK", 1, 10000, futu_trader::OrderType::kLimit,
-                           futu_trader::OrderState::kPending, "idemp1"};
+  futu_trader::Order order{.orderId = "o1",
+                           .symbol = "700.HK",
+                           .quantity = 1,
+                           .limitPriceMinor = 10000,
+                           .type = futu_trader::OrderType::kLimit,
+                           .state = futu_trader::OrderState::kPending,
+                           .idempotencyKey = "idemp1"};
   assert(om.submit(order));
   assert(!om.submit(order));
   assert(om.cancel("o1"));
 
-  futu_trader::RiskEngine risk({50000, 100000, 10000, 10, 0.8});
+  futu_trader::RiskEngine risk({.maxPositionNotionalMinor = 50000,
+                                .maxPortfolioNotionalMinor = 100000,
+                                .maxDailyLossMinor = 10000,
+                                .maxOpenOrders = 10,
+                                .concentrationLimit = 0.8});
   assert(risk.canPlace(order, std::unordered_map<std::string, futu_trader::Money>{}, 0, 0, 0));
 
-  futu_trader::Order large{"o2", "700.HK", 100, 10000, futu_trader::OrderType::kLimit,
-                           futu_trader::OrderState::kPending, "idemp2"};
+  futu_trader::Order large{.orderId = "o2",
+                           .symbol = "700.HK",
+                           .quantity = 100,
+                           .limitPriceMinor = 10000,
+                           .type = futu_trader::OrderType::kLimit,
+                           .state = futu_trader::OrderState::kPending,
+                           .idempotencyKey = "idemp2"};
   assert(!risk.canPlace(large, std::unordered_map<std::string, futu_trader::Money>{}, 0, 0, 0));
 
   std::vector<int> commands;
@@ -31,7 +45,7 @@ int main() {
   apiConfig.tradePasswordMd5 = "md5hash";
   apiConfig.apiInvoker = [&commands](int command, const std::string&) {
     commands.push_back(command);
-    return futu_trader::FutuOpenApiResult{true, "ok"};
+    return futu_trader::FutuOpenApiResult{.success = true, .payload = "ok"};
   };
 
   futu_trader::FutuClient apiClient(apiConfig);

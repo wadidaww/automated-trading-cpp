@@ -154,10 +154,10 @@ std::vector<Tick> FutuClient::getKl(const std::string& symbol, std::size_t bars)
   std::vector<Tick> ticks;
   ticks.reserve(bars);
   for (std::size_t i = 0; i < bars; ++i) {
-    ticks.push_back(Tick{symbol,
-                         static_cast<Money>(10000 + static_cast<Money>(i)),
-                         100,
-                         std::chrono::system_clock::now()});
+    ticks.push_back(Tick{.symbol = symbol,
+                         .priceMinor = static_cast<Money>(10000 + static_cast<Money>(i)),
+                         .volume = 100,
+                         .timestamp = std::chrono::system_clock::now()});
   }
   return ticks;
 }
@@ -167,7 +167,10 @@ bool FutuClient::subscribe(const std::string& symbol) {
   if (config_.apiInvoker && !callOpenApi(futuOpenApiCommand::subscribe, symbol).success) {
     return false;
   }
-  last_ticks_[symbol] = Tick{.symbol=symbol, .priceMinor=10000, .volume=100, .timestamp=std::chrono::system_clock::now()};
+  last_ticks_[symbol] = Tick{.symbol = symbol,
+                             .priceMinor = 10000,
+                             .volume = 100,
+                             .timestamp = std::chrono::system_clock::now()};
   return true;
 }
 

@@ -22,7 +22,8 @@ struct PipelineMetrics {
 
 class TradingPipeline {
  public:
-  TradingPipeline(std::shared_ptr<ISignalModel> model, RiskEngine& risk, OrderManager& orderManager);
+  TradingPipeline(std::shared_ptr<ISignalModel> model, RiskEngine& risk,
+                  OrderManager& orderManager);
   ~TradingPipeline();
 
   void start();

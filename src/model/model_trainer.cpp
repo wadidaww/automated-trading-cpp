@@ -30,7 +30,8 @@ TrainingMetrics ModelTrainer::evaluate(const std::vector<double>& pnl, int trueP
                                        int falsePositive, int falseNegative) const {
   TrainingMetrics m;
   if (!pnl.empty()) {
-    const double mean = std::accumulate(pnl.begin(), pnl.end(), 0.0) / static_cast<double>(pnl.size());
+    const double mean =
+        std::accumulate(pnl.begin(), pnl.end(), 0.0) / static_cast<double>(pnl.size());
     double var = 0.0;
     for (double r : pnl) {
       const double d = r - mean;

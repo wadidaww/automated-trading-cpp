@@ -25,9 +25,8 @@ bool ReportGenerator::writeHtml(const BacktestMetrics& metrics, const std::strin
   if (!out) {
     return false;
   }
-  out << "<html><body><h1>Backtest Report</h1>"
-      << "<ul><li>Total Return: " << metrics.totalReturn << "</li>"
-      << "<li>Sharpe: " << metrics.sharpe << "</li>"
+  out << "<html><body><h1>Backtest Report</h1>" << "<ul><li>Total Return: " << metrics.totalReturn
+      << "</li>" << "<li>Sharpe: " << metrics.sharpe << "</li>"
       << "<li>Max Drawdown: " << metrics.maxDrawdown << "</li></ul></body></html>";
   return true;
 }

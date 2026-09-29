@@ -25,7 +25,8 @@ std::unordered_map<std::string, std::string> Config::parseSimpleYaml(const std::
     while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) {
       key.pop_back();
     }
-    while (!value.empty() && (value.front() == ' ' || value.front() == '\t' || value.front() == '"')) {
+    while (!value.empty() &&
+           (value.front() == ' ' || value.front() == '\t' || value.front() == '"')) {
       value.erase(value.begin());
     }
     while (!value.empty() && (value.back() == '"' || value.back() == '\r' || value.back() == ' ')) {

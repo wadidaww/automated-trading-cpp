@@ -50,7 +50,8 @@ GradientBoostingModel GradientBoostingModel::load(const std::string& path) {
     return GradientBoostingModel({});
   }
   std::vector<double> weights(size, 0.0);
-  in.read(reinterpret_cast<char*>(weights.data()), static_cast<std::streamsize>(sizeof(double) * size));
+  in.read(reinterpret_cast<char*>(weights.data()),
+          static_cast<std::streamsize>(sizeof(double) * size));
   if (!in) {
     return GradientBoostingModel({});
   }

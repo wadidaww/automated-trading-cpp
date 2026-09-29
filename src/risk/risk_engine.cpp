@@ -22,9 +22,9 @@ double DrawdownMonitor::maxDrawdown() const { return maxDrawdown_; }
 
 RiskEngine::RiskEngine(RiskConfig config) : config_(config) {}
 
-bool RiskEngine::canPlace(const Order& order, const std::unordered_map<std::string, Money>& positions,
-                          Money portfolioNotional, Money dailyPnl,
-                          std::size_t openOrders) const {
+bool RiskEngine::canPlace(const Order& order,
+                          const std::unordered_map<std::string, Money>& positions,
+                          Money portfolioNotional, Money dailyPnl, std::size_t openOrders) const {
   if (openOrders >= config_.maxOpenOrders) {
     return false;
   }
@@ -42,8 +42,7 @@ bool RiskEngine::canPlace(const Order& order, const std::unordered_map<std::stri
     return false;
   }
   if (config_.maxPortfolioNotionalMinor > 0 &&
-      static_cast<double>(symbolNotional) /
-              static_cast<double>(config_.maxPortfolioNotionalMinor) >
+      static_cast<double>(symbolNotional) / static_cast<double>(config_.maxPortfolioNotionalMinor) >
           config_.concentrationLimit) {
     return false;
   }

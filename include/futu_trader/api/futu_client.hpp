@@ -1,9 +1,9 @@
 #pragma once
 
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <functional>
 #include <unordered_map>
 #include <vector>
 
@@ -28,7 +28,8 @@ struct FutuOpenApiResult {
   std::string payload;
 };
 
-using FutuOpenApiInvoker = std::function<FutuOpenApiResult(int command, const std::string& payload)>;
+using FutuOpenApiInvoker =
+    std::function<FutuOpenApiResult(int command, const std::string& payload)>;
 
 struct FutuClientConfig {
   std::string host{"127.0.0.1"};

@@ -8,12 +8,39 @@
 #include "Qot_Sub.pb.h"
 #include "Trd_GetAccList.pb.h"
 #include "Trd_GetFunds.pb.h"
+#include "Trd_GetOrderFillList.pb.h"
+#include "Trd_GetOrderList.pb.h"
 #include "Trd_GetPositionList.pb.h"
+#include "Trd_ModifyOrder.pb.h"
+#include "Trd_PlaceOrder.pb.h"
+#include "Trd_SubAccPush.pb.h"
+#include "Trd_UnlockTrade.pb.h"
 #include "futu_trader/opend/proto_ids.hpp"
+#include "futu_trader/opend/trade_decode.hpp"
 
 namespace futu_trader::opend {
 
 namespace {
+
+// Maps OpenD's retType to an error whose code says whether the request definitely failed.
+// kServer / kInvalidArg mean "the gateway refused it"; anything that could mean "it may have
+// been processed" (timeouts, disconnects, unknown codes) stays ambiguous so the OMS never
+// treats it as a proven rejection.
+Error errorFromRetType(std::int32_t retType, const std::string& message) {
+  const std::string text = "OpenD error " + std::to_string(retType) + ": " + message;
+  switch (retType) {
+    case Common::RetType_Failed:
+      return {ErrorCode::kServer, text};
+    case Common::RetType_Invalid:
+      return {ErrorCode::kInvalidArg, text};
+    case Common::RetType_TimeOut:
+      return {ErrorCode::kTimeout, text};
+    case Common::RetType_DisConnect:
+      return {ErrorCode::kDisconnected, text};
+    default:
+      return {ErrorCode::kProtocol, text};  // Unknown (-400) and anything unrecognised
+  }
+}
 
 template <typename Rsp>
 Result<Rsp> parseResponse(const Result<std::vector<std::uint8_t>>& raw) {
@@ -25,8 +52,7 @@ Result<Rsp> parseResponse(const Result<std::vector<std::uint8_t>>& raw) {
     return Error{ErrorCode::kProtocol, "unparseable response"};
   }
   if (rsp.rettype() != Common::RetType_Succeed) {
-    return Error{ErrorCode::kServer,
-                 "OpenD error " + std::to_string(rsp.rettype()) + ": " + rsp.retmsg()};
+    return errorFromRetType(rsp.rettype(), rsp.retmsg());
   }
   return rsp;
 }
@@ -37,10 +63,10 @@ void fill(Qot_Common::Security* out, const SecurityRef& sec) {
 }
 
 void fill(Trd_Common::TrdHeader* out, const AccountHeader& header) {
-  out->set_trdenv(header.env == TrdEnv::kReal ? Trd_Common::TrdEnv_Real
-                                              : Trd_Common::TrdEnv_Simulate);
-  out->set_accid(header.accId);
-  out->set_trdmarket(static_cast<std::int32_t>(header.market));
+  out->set_trdenv(header.env() == TrdEnv::kReal ? Trd_Common::TrdEnv_Real
+                                                : Trd_Common::TrdEnv_Simulate);
+  out->set_accid(header.accId());
+  out->set_trdmarket(static_cast<std::int32_t>(header.market()));
 }
 
 }  // namespace
@@ -133,12 +159,20 @@ void OpenDClient::supervisorLoop() {
           std::scoped_lock lock(subMu_);
           subs = subs_;
         }
+        std::vector<std::uint64_t> accIds;
+        {
+          std::scoped_lock lock(subMu_);
+          accIds = accPush_;
+        }
         bool restored = true;
         for (const auto& sub : subs) {
           if (!sendSubscribe(sub)) {
             restored = false;
             break;
           }
+        }
+        if (restored && !accIds.empty() && !sendAccountPush(accIds)) {
+          restored = false;
         }
         if (restored) {
           ++reconnects_;
@@ -263,6 +297,160 @@ Result<std::vector<Bar>> OpenDClient::requestHistoryKl(const SecurityRef& securi
   return Error{ErrorCode::kProtocol, "history paging exceeded maxPages"};
 }
 
+void OpenDClient::fillPacketId(Common::PacketID* packetId) {
+  packetId->set_connid(conn_.session().connId);
+  packetId->set_serialno(tradeSerial_.fetch_add(1));
+}
+
+Result<bool> OpenDClient::unlockTrade(bool unlock, const std::string& pwdMd5) {
+  Trd_UnlockTrade::Request req;
+  req.mutable_c2s()->set_unlock(unlock);
+  if (unlock) {
+    req.mutable_c2s()->set_pwdmd5(pwdMd5);
+  }
+  const auto rsp = parseResponse<Trd_UnlockTrade::Response>(
+      conn_.request(protoId::kTrdUnlockTrade, req.SerializeAsString()));
+  if (!rsp) {
+    return rsp.error();
+  }
+  return true;
+}
+
+Result<bool> OpenDClient::sendAccountPush(const std::vector<std::uint64_t>& accIds) {
+  Trd_SubAccPush::Request req;
+  for (const auto id : accIds) {
+    req.mutable_c2s()->add_accidlist(id);
+  }
+  const auto rsp = parseResponse<Trd_SubAccPush::Response>(
+      conn_.request(protoId::kTrdSubAccPush, req.SerializeAsString()));
+  if (!rsp) {
+    return rsp.error();
+  }
+  return true;
+}
+
+Result<bool> OpenDClient::subscribeAccountPush(const std::vector<std::uint64_t>& accIds) {
+  if (accIds.empty()) {
+    return Error{ErrorCode::kInvalidArg, "no accounts to subscribe"};
+  }
+  auto result = sendAccountPush(accIds);
+  if (result) {
+    std::scoped_lock lock(subMu_);
+    accPush_ = accIds;
+  }
+  return result;
+}
+
+Result<PlacedOrder> OpenDClient::placeOrder(const AccountHeader& header,
+                                            const PlaceOrderRequest& request) {
+  if (request.qty <= 0 || request.priceMills <= 0 || request.code.empty()) {
+    return Error{ErrorCode::kInvalidArg, "invalid order request"};
+  }
+  Trd_PlaceOrder::Request req;
+  auto* c2s = req.mutable_c2s();
+  fillPacketId(c2s->mutable_packetid());
+  fill(c2s->mutable_header(), header);
+  const bool buy = request.side == Side::kBuy;
+  auto trdSide = Trd_Common::TrdSide_Buy;
+  if (!buy) {
+    trdSide = request.sellShort ? Trd_Common::TrdSide_SellShort : Trd_Common::TrdSide_Sell;
+  }
+  c2s->set_trdside(trdSide);
+  c2s->set_ordertype(Trd_Common::OrderType_Normal);
+  c2s->set_code(request.code);
+  c2s->set_qty(static_cast<double>(request.qty));
+  c2s->set_price(static_cast<double>(request.priceMills) / static_cast<double>(kMoneyScale));
+  c2s->set_secmarket(Trd_Common::TrdSecMarket_HK);
+  c2s->set_remark(request.remark);
+  c2s->set_timeinforce(Trd_Common::TimeInForce_DAY);
+  const auto rsp = parseResponse<Trd_PlaceOrder::Response>(
+      conn_.request(protoId::kTrdPlaceOrder, req.SerializeAsString()));
+  if (!rsp) {
+    return rsp.error();
+  }
+  if (!rsp.value().has_s2c() || !rsp.value().s2c().has_orderid()) {
+    return Error{ErrorCode::kProtocol, "PlaceOrder: response carried no order id"};
+  }
+  return PlacedOrder{rsp.value().s2c().orderid(), rsp.value().s2c().orderidex()};
+}
+
+namespace {
+Result<bool> sendModify(OpenDConnection& conn, Trd_ModifyOrder::Request& req) {
+  const auto rsp = parseResponse<Trd_ModifyOrder::Response>(
+      conn.request(protoId::kTrdModifyOrder, req.SerializeAsString()));
+  if (!rsp) {
+    return rsp.error();
+  }
+  return true;
+}
+}  // namespace
+
+Result<bool> OpenDClient::cancelOrder(const AccountHeader& header, std::uint64_t orderId) {
+  Trd_ModifyOrder::Request req;
+  auto* c2s = req.mutable_c2s();
+  fillPacketId(c2s->mutable_packetid());
+  fill(c2s->mutable_header(), header);
+  c2s->set_orderid(orderId);
+  c2s->set_modifyorderop(Trd_Common::ModifyOrderOp_Cancel);
+  return sendModify(conn_, req);
+}
+
+Result<bool> OpenDClient::modifyOrder(const AccountHeader& header, std::uint64_t orderId,
+                                      std::int64_t qty, Money priceMills) {
+  if (qty <= 0 || priceMills <= 0) {
+    return Error{ErrorCode::kInvalidArg, "invalid modify request"};
+  }
+  Trd_ModifyOrder::Request req;
+  auto* c2s = req.mutable_c2s();
+  fillPacketId(c2s->mutable_packetid());
+  fill(c2s->mutable_header(), header);
+  c2s->set_orderid(orderId);
+  c2s->set_modifyorderop(Trd_Common::ModifyOrderOp_Normal);
+  c2s->set_qty(static_cast<double>(qty));
+  c2s->set_price(static_cast<double>(priceMills) / static_cast<double>(kMoneyScale));
+  return sendModify(conn_, req);
+}
+
+Result<std::vector<BrokerOrder>> OpenDClient::getOrderList(const AccountHeader& header) {
+  Trd_GetOrderList::Request req;
+  fill(req.mutable_c2s()->mutable_header(), header);
+  req.mutable_c2s()->set_refreshcache(true);  // reconciliation must not read a stale cache
+  const auto rsp = parseResponse<Trd_GetOrderList::Response>(
+      conn_.request(protoId::kTrdGetOrderList, req.SerializeAsString()));
+  if (!rsp) {
+    return rsp.error();
+  }
+  std::vector<BrokerOrder> out;
+  for (const auto& order : rsp.value().s2c().orderlist()) {
+    auto converted = convertOrder(order);
+    if (!converted) {
+      return converted.error();
+    }
+    out.push_back(std::move(converted.value()));
+  }
+  return out;
+}
+
+Result<std::vector<BrokerFill>> OpenDClient::getOrderFillList(const AccountHeader& header) {
+  Trd_GetOrderFillList::Request req;
+  fill(req.mutable_c2s()->mutable_header(), header);
+  req.mutable_c2s()->set_refreshcache(true);
+  const auto rsp = parseResponse<Trd_GetOrderFillList::Response>(
+      conn_.request(protoId::kTrdGetOrderFillList, req.SerializeAsString()));
+  if (!rsp) {
+    return rsp.error();
+  }
+  std::vector<BrokerFill> out;
+  for (const auto& item : rsp.value().s2c().orderfilllist()) {
+    auto converted = convertFill(item);
+    if (!converted) {
+      return converted.error();
+    }
+    out.push_back(std::move(converted.value()));
+  }
+  return out;
+}
+
 Result<std::vector<TrdAccount>> OpenDClient::getAccList() {
   Trd_GetAccList::Request req;
   req.mutable_c2s()->set_userid(0);
@@ -322,8 +510,17 @@ Result<std::vector<PositionInfo>> OpenDClient::getPositions(const AccountHeader&
     if (!qty || !sellable || !price || !cost) {
       return Error{ErrorCode::kProtocol, "GetPositionList: bad value for " + pos.code()};
     }
+    // Futu reports a short as a positive qty plus PositionSide_Short. Make the sign explicit, and
+    // fail closed on an unknown side: guessing "long" for a short would invert our exposure.
+    std::int64_t signedQty = qty.value();
+    if (pos.positionside() == Trd_Common::PositionSide_Short) {
+      signedQty = -signedQty;
+    } else if (pos.positionside() != Trd_Common::PositionSide_Long) {
+      return Error{ErrorCode::kProtocol,
+                   "GetPositionList: unknown position side for " + pos.code()};
+    }
     out.push_back(
-        PositionInfo{pos.code(), qty.value(), sellable.value(), cost.value(), price.value()});
+        PositionInfo{pos.code(), signedQty, sellable.value(), cost.value(), price.value()});
   }
   return out;
 }

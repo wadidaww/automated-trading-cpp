@@ -62,7 +62,44 @@ struct TrdAccount {
   std::vector<std::int32_t> markets;  // Trd_Common.TrdMarket authorisations
 };
 
-struct AccountHeader {
+}  // namespace futu_trader::opend
+
+namespace futu_trader::oms {
+class TradeTarget;
+}
+
+namespace futu_trader::opend {
+
+/**
+ * Identifies the account and environment a request is sent to. There is deliberately NO public
+ * way to build a REAL header: only oms::TradeTarget can, and a REAL TradeTarget requires a
+ * LiveApproval that only LiveGate::approveReal can issue. So "sent to real money" is unforgeable
+ * at compile time, not just by convention.
+ */
+class AccountHeader {
+ public:
+  AccountHeader() = delete;
+  static AccountHeader simulate(std::uint64_t accId, TrdMarket market) {
+    return {TrdEnv::kSimulate, accId, market};
+  }
+  TrdEnv env() const { return env_; }
+  std::uint64_t accId() const { return accId_; }
+  TrdMarket market() const { return market_; }
+
+ private:
+  friend class oms::TradeTarget;
+  AccountHeader(TrdEnv env, std::uint64_t accId, TrdMarket market)
+      : env_(env), accId_(accId), market_(market) {}
+  TrdEnv env_;
+  std::uint64_t accId_;
+  TrdMarket market_;
+};
+
+/**
+ * An account header as reported by the broker on a push. It describes where an event happened
+ * and cannot be used to address a request.
+ */
+struct WireHeader {
   TrdEnv env{TrdEnv::kSimulate};
   std::uint64_t accId{0};
   TrdMarket market{TrdMarket::kHK};
@@ -78,7 +115,7 @@ struct FundsInfo {
 
 struct PositionInfo {
   std::string code;
-  std::int64_t qty{0};
+  std::int64_t qty{0};  // signed: long > 0, short < 0
   std::int64_t canSellQty{0};
   Money costPrice{0};
   Money price{0};
@@ -100,6 +137,56 @@ struct Bar {
   Money low{0};
   Money close{0};
   std::int64_t volume{0};
+};
+
+struct PlaceOrderRequest {
+  std::string code;  // e.g. "00700"
+  Side side{Side::kBuy};
+  bool sellShort{false};  // a sell that opens/extends a short must use TrdSide_SellShort
+  std::int64_t qty{0};
+  Money priceMills{0};  // limit price; market orders are deliberately not supported
+  std::string remark;   // carries our ClOrdId so an ambiguous submit can be found again
+};
+
+struct PlacedOrder {
+  std::uint64_t orderId{0};
+  std::string orderIdEx;
+};
+
+struct BrokerOrder {
+  std::uint64_t orderId{0};
+  std::string orderIdEx;
+  std::string code;
+  Side side{Side::kBuy};
+  std::int64_t qty{0};
+  Money priceMills{0};
+  std::int64_t fillQty{0};
+  Money fillAvgPriceMills{0};
+  std::int32_t status{0};  // raw Trd_Common.OrderStatus; map with oms::fromFutuStatus
+  std::string remark;
+  double updateTimestamp{0.0};
+};
+
+struct BrokerFill {
+  std::string fillId;  // fillIDEx: unique per fill, used for idempotent application
+  std::uint64_t orderId{0};
+  std::string code;
+  Side side{Side::kBuy};
+  std::int64_t qty{0};
+  Money priceMills{0};
+  std::int32_t status{0};  // Trd_Common.OrderFillStatus: 0 OK, 1 cancelled (busted), ...
+};
+
+/** Pushed order status change (Trd_UpdateOrder). */
+struct OrderUpdate {
+  WireHeader header;
+  BrokerOrder order;
+};
+
+/** Pushed fill (Trd_UpdateOrderFill). */
+struct FillUpdate {
+  WireHeader header;
+  BrokerFill fill;
 };
 
 /** Qot_Common.SubType values. */

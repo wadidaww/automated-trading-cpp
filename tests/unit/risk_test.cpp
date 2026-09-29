@@ -142,3 +142,39 @@ TEST(DrawdownMonitor, TracksPeakToTrough) {
   dd.observe(110);
   EXPECT_NEAR(dd.maxDrawdown(), 0.25, 1e-12);
 }
+
+TEST(RiskEngine, FlatteningIsAllowedEvenWhenTheDailyLossAndOrderLimitsAreBreached) {
+  // After a breach the system must still be able to reduce risk.
+  RiskEngine risk(limits());
+  const Positions pos{{"700.HK", 50000}};
+  const Order sell = makeOrder(Side::kSell, 3, 10000);
+  EXPECT_EQ(risk.check(sell, pos, 50000, -9'999'999, 10), RiskReject::kOk);  // loss + full orders
+  // The same conditions block an order that ADDS exposure.
+  const Order buy = makeOrder(Side::kBuy, 1, 10000);
+  EXPECT_EQ(risk.check(buy, pos, 50000, -9'999'999, 0), RiskReject::kDailyLoss);
+  EXPECT_EQ(risk.check(buy, pos, 50000, 0, 10), RiskReject::kMaxOpenOrders);
+}
+
+TEST(RiskEngine, ReducingOrdersStillGetOverflowAndValidityChecks) {
+  RiskEngine risk(limits());
+  const Positions pos{{"700.HK", 50000}};
+  EXPECT_EQ(risk.check(makeOrder(Side::kSell, 0, 10000), pos, 50000, 0, 0),
+            RiskReject::kInvalidOrder);
+  const Money huge = std::numeric_limits<Money>::max() / 2 + 1;
+  EXPECT_EQ(risk.check(makeOrder(Side::kSell, 4, huge), pos, 50000, 0, 0), RiskReject::kOverflow);
+}
+
+TEST(RiskEngine, UnsetConcentrationLimitFailsClosed) {
+  RiskConfig cfg = limits();
+  cfg.concentrationLimit = 0.0;  // unset must not mean "unlimited"
+  RiskEngine risk(cfg);
+  EXPECT_EQ(risk.check(makeOrder(Side::kBuy, 1, 10000), {}, 0, 0, 0), RiskReject::kConcentration);
+  EXPECT_EQ(RiskConfig{}.concentrationLimit, 0.0);
+}
+
+TEST(RiskEngine, UnsetDailyLossLimitFailsClosed) {
+  RiskConfig cfg = limits();
+  cfg.maxDailyLossMinor = 0;
+  RiskEngine risk(cfg);
+  EXPECT_EQ(risk.check(makeOrder(Side::kBuy, 1, 10000), {}, 0, 0, 0), RiskReject::kDailyLoss);
+}

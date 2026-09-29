@@ -40,6 +40,15 @@ Result<SessionInfo> OpenDConnection::connect() {
   if (ec) {
     return Error{ErrorCode::kDisconnected, "resolve failed: " + ec.message()};
   }
+  if (!config_.allowNonLoopback) {
+    for (const auto& entry : endpoints) {
+      if (!entry.endpoint().address().is_loopback()) {
+        return Error{ErrorCode::kInvalidArg,
+                     "refusing non-loopback OpenD host '" + config_.host +
+                         "': the protocol is unencrypted (set allowNonLoopback to override)"};
+      }
+    }
+  }
   boost::system::error_code connectEc = asio::error::would_block;
   asio::async_connect(impl_->socket, endpoints,
                       [&](const boost::system::error_code& code, const asio::ip::tcp::endpoint&) {
@@ -122,7 +131,7 @@ void OpenDConnection::close() {
     orphans.swap(pending_);
   }
   for (auto& [serial, promise] : orphans) {
-    promise->set_value(Error{ErrorCode::kDisconnected, "connection closed"});
+    promise->promise.set_value(Error{ErrorCode::kDisconnected, "connection closed"});
   }
 }
 
@@ -142,7 +151,7 @@ void OpenDConnection::fail(const Error& error) {
     orphans.swap(pending_);
   }
   for (auto& [serial, promise] : orphans) {
-    promise->set_value(error);
+    promise->promise.set_value(error);
   }
   if (onDisconnect_ && !stopping_.load()) {
     onDisconnect_(error);
@@ -166,12 +175,16 @@ void OpenDConnection::readerLoop() {
         std::scoped_lock lock(pendingMu_);
         const auto found = pending_.find(frame->serial);
         if (found != pending_.end()) {
-          waiter = std::move(found->second);
-          pending_.erase(found);
+          if (found->second->protoId == frame->protoId) {
+            waiter = std::move(found->second);
+            pending_.erase(found);
+          } else {
+            ++mismatched_;  // a serial collision with a push must not steal a request's reply
+          }
         }
       }
       if (waiter) {
-        waiter->set_value(std::move(frame->body));
+        waiter->promise.set_value(std::move(frame->body));
       } else if (onPush_) {
         onPush_(*frame);
       }
@@ -227,7 +240,8 @@ Result<std::vector<std::uint8_t>> OpenDConnection::requestInternal(
   }
   const std::uint32_t serial = nextSerial_.fetch_add(1);
   auto promise = std::make_shared<Pending>();
-  auto future = promise->get_future();
+  promise->protoId = protoId;
+  auto future = promise->promise.get_future();
   {
     std::scoped_lock lock(pendingMu_);
     pending_[serial] = promise;

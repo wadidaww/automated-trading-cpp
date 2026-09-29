@@ -151,7 +151,7 @@ TEST_F(OpenDClientTest, AccountFundsAndPositionsAreReadOnlyQueries) {
   EXPECT_EQ(accounts.value()[0].env, TrdEnv::kSimulate);
   EXPECT_EQ(accounts.value()[1].env, TrdEnv::kReal);
 
-  const AccountHeader sim{TrdEnv::kSimulate, accounts.value()[0].accId, TrdMarket::kHK};
+  const auto sim = AccountHeader::simulate(accounts.value()[0].accId, TrdMarket::kHK);
   const auto funds = client.getFunds(sim);
   ASSERT_TRUE(funds.ok()) << funds.error().message;
   EXPECT_EQ(funds.value().cash, 1234567891);
@@ -162,6 +162,30 @@ TEST_F(OpenDClientTest, AccountFundsAndPositionsAreReadOnlyQueries) {
   EXPECT_EQ(positions.value()[0].qty, 200);
   EXPECT_EQ(positions.value()[0].canSellQty, 100);
   EXPECT_EQ(positions.value()[0].costPrice, 340000);
+}
+
+TEST_F(OpenDClientTest, ShortPositionsComeBackNegative) {
+  // Regression: Futu sends a short as a positive qty + PositionSide_Short; ignoring the side
+  // made shorts look long and inverted exposure.
+  server.setPositions({{"00700", 300, 300, 350.2, 340.0, 1}, {"09988", 100, 100, 80.0, 79.0, 0}});
+  OpenDClient client(configFor(port));
+  ASSERT_TRUE(client.connect().ok());
+  const auto sim = AccountHeader::simulate(111, TrdMarket::kHK);
+  const auto positions = client.getPositions(sim);
+  ASSERT_TRUE(positions.ok()) << positions.error().message;
+  ASSERT_EQ(positions.value().size(), 2U);
+  EXPECT_EQ(positions.value()[0].qty, -300);
+  EXPECT_EQ(positions.value()[1].qty, 100);
+}
+
+TEST_F(OpenDClientTest, UnknownPositionSideFailsClosed) {
+  server.setPositions({{"00700", 300, 300, 350.2, 340.0, -1}});
+  OpenDClient client(configFor(port));
+  ASSERT_TRUE(client.connect().ok());
+  const auto sim = AccountHeader::simulate(111, TrdMarket::kHK);
+  const auto positions = client.getPositions(sim);
+  ASSERT_FALSE(positions.ok());
+  EXPECT_EQ(positions.error().code, ErrorCode::kProtocol);
 }
 
 TEST_F(OpenDClientTest, ServerRejectionSurfacesAsServerError) {
@@ -215,6 +239,39 @@ TEST_F(OpenDClientTest, ResponseCoalescedWithPushIsDeliveredBoth) {
   const auto quotes = client.getBasicQuotes({kTencent});
   ASSERT_TRUE(quotes.ok()) << quotes.error().message;
   EXPECT_TRUE(waitFor([&] { return pushes.load() == 1; }));
+}
+
+TEST_F(OpenDClientTest, ReplyWithTheWrongProtoIdIsNotAcceptedAsTheAnswer) {
+  // A push that happens to share a request's serial must not be consumed as its response.
+  OpenDClient client(configFor(port));
+  ASSERT_TRUE(client.connect().ok());
+  mock::Faults faults;
+  faults.wrongProtoIdResponses = 1;
+  server.setFaults(faults);
+  const auto result = client.getBasicQuotes({kTencent});
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, ErrorCode::kTimeout);
+  EXPECT_EQ(client.mismatchedReplies(), 1U);
+  EXPECT_TRUE(client.isConnected());
+  EXPECT_TRUE(client.getBasicQuotes({kTencent}).ok());  // the connection is unharmed
+}
+
+TEST_F(OpenDClientTest, NonLoopbackHostIsRefusedByDefault) {
+  ClientConfig cfg = configFor(port);
+  cfg.connection.host = "192.0.2.1";  // TEST-NET-1: never reachable, and definitely not loopback
+  cfg.autoReconnect = false;
+  OpenDClient client(cfg);
+  const auto session = client.connect();
+  ASSERT_FALSE(session.ok());
+  EXPECT_EQ(session.error().code, ErrorCode::kInvalidArg);
+  EXPECT_NE(session.error().message.find("loopback"), std::string::npos);
+}
+
+TEST_F(OpenDClientTest, LocalhostByNameIsAcceptedAsLoopback) {
+  ClientConfig cfg = configFor(port);
+  cfg.connection.host = "localhost";
+  OpenDClient client(cfg);
+  EXPECT_TRUE(client.connect().ok());
 }
 
 TEST_F(OpenDClientTest, DroppedResponseTimesOutWithoutKillingTheConnection) {

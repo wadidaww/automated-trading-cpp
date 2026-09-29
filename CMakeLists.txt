@@ -31,10 +31,22 @@ target_link_libraries(futu_proto PUBLIC protobuf::libprotobuf)
 target_compile_options(futu_proto PRIVATE -w)  # generated code; GCC 14 false-positive warnings
 
 add_library(futu_trader
+  src/instrument/hk_rules.cpp
+  src/oms/order_state.cpp
+  src/oms/pre_trade.cpp
+  src/portfolio/fees.cpp
+  src/sizing/sizing.cpp
+  src/portfolio/position_book.cpp
+  src/oms/live_gate.cpp
+  src/oms/oms.cpp
+  src/oms/push_router.cpp
+  src/execution/rate_limiter.cpp
+  src/execution/kill_switch.cpp
   src/opend/sha1.cpp
   src/opend/framing.cpp
   src/opend/connection.cpp
   src/opend/client.cpp
+  src/opend/trade_decode.cpp
   src/api/futu_client.cpp
   src/data/data_normalizer.cpp
   src/data/market_data.cpp
@@ -77,8 +89,17 @@ if(FUTU_TRADER_BUILD_TESTS)
     target_link_libraries(futu_mock_opend PUBLIC futu_trader)
 
     add_executable(futu_unit_tests
+      tests/unit/hk_rules_test.cpp
+      tests/unit/order_state_test.cpp
+      tests/unit/sizing_test.cpp
+      tests/unit/oms_test.cpp
+      tests/unit/oms_integration_test.cpp
+      tests/unit/pre_trade_test.cpp
+      tests/unit/portfolio_test.cpp
+      tests/unit/safety_test.cpp
       tests/unit/opend_framing_test.cpp
       tests/unit/opend_client_test.cpp
+      tests/unit/opend_trade_test.cpp
       tests/unit/data_normalizer_test.cpp
       tests/unit/model_test.cpp
       tests/unit/risk_test.cpp

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <future>
@@ -30,6 +31,12 @@ struct ConnectionConfig {
   std::size_t maxBody{kDefaultMaxBody};
   /** Overrides the server-advised keep-alive interval. Intended for tests. */
   std::optional<std::chrono::milliseconds> keepAliveOverride;
+  /**
+   * OpenD speaks plaintext here, so the host must be loopback unless explicitly overridden;
+   * otherwise a mistyped or hostile config would send orders (and the unlock hash) over the
+   * network.
+   */
+  bool allowNonLoopback{false};
 };
 
 struct SessionInfo {
@@ -72,10 +79,15 @@ class OpenDConnection {
                                             std::chrono::milliseconds timeout);
 
   const SessionInfo& session() const { return session_; }
+  /** Replies whose serial matched a request but whose proto id did not (treated as pushes). */
+  std::size_t mismatchedReplies() const { return mismatched_.load(); }
 
  private:
   struct Impl;
-  using Pending = std::promise<Result<std::vector<std::uint8_t>>>;
+  struct Pending {
+    std::promise<Result<std::vector<std::uint8_t>>> promise;
+    std::uint32_t protoId{0};  // a reply must carry the proto id of the request it answers
+  };
 
   void readerLoop();
   void keepAliveLoop();
@@ -93,6 +105,7 @@ class OpenDConnection {
   std::atomic<bool> connected_{false};
   std::atomic<bool> stopping_{false};
   std::atomic<std::uint32_t> nextSerial_{1};
+  std::atomic<std::size_t> mismatched_{0};
 
   std::mutex pendingMu_;
   std::unordered_map<std::uint32_t, std::shared_ptr<Pending>> pending_;

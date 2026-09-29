@@ -43,6 +43,28 @@ const char* toString(RiskReject reason) {
       return "concentration";
     case RiskReject::kOverflow:
       return "overflow";
+    case RiskReject::kKillSwitch:
+      return "kill_switch";
+    case RiskReject::kUnknownInstrument:
+      return "unknown_instrument";
+    case RiskReject::kLotSize:
+      return "lot_size";
+    case RiskReject::kTickSize:
+      return "tick_size";
+    case RiskReject::kPriceBand:
+      return "price_band";
+    case RiskReject::kStaleQuote:
+      return "stale_quote";
+    case RiskReject::kMaxOrderNotional:
+      return "max_order_notional";
+    case RiskReject::kShortSale:
+      return "short_sale";
+    case RiskReject::kRateLimit:
+      return "rate_limit";
+    case RiskReject::kUnresolvedOrder:
+      return "unresolved_order";
+    case RiskReject::kSelfTrade:
+      return "self_trade";
   }
   return "unknown";
 }
@@ -72,13 +94,6 @@ RiskReject RiskEngine::check(const Order& order,
   if (order.quantity <= 0 || order.limitPriceMinor <= 0) {
     return RiskReject::kInvalidOrder;
   }
-  if (openOrders >= config_.maxOpenOrders) {
-    return RiskReject::kMaxOpenOrders;
-  }
-  // Compare without negating dailyPnl: -INT64_MIN overflows.
-  if (config_.maxDailyLossMinor < 0 || dailyPnl < -config_.maxDailyLossMinor) {
-    return RiskReject::kDailyLoss;
-  }
 
   Money orderNotional = 0;
   if (!checkedMul(order.limitPriceMinor, order.quantity, orderNotional)) {
@@ -101,9 +116,17 @@ RiskReject RiskEngine::check(const Order& order,
     return RiskReject::kOverflow;
   }
 
-  // Exposure-reducing orders never breach the position/portfolio limits.
-  if (absAfter <= absCurrent) {
+  // Exposure-reducing orders skip every limit below, including the daily-loss and open-order
+  // caps: a breach must never prevent flattening.
+  if (absAfter < absCurrent) {
     return RiskReject::kOk;
+  }
+  if (openOrders >= config_.maxOpenOrders) {
+    return RiskReject::kMaxOpenOrders;
+  }
+  // Compare without negating dailyPnl: -INT64_MIN overflows. An unset loss limit rejects.
+  if (config_.maxDailyLossMinor <= 0 || dailyPnl < -config_.maxDailyLossMinor) {
+    return RiskReject::kDailyLoss;
   }
   if (absAfter > config_.maxPositionNotionalMinor) {
     return RiskReject::kPositionLimit;
@@ -114,6 +137,9 @@ RiskReject RiskEngine::check(const Order& order,
   }
   if (portfolioAfter > config_.maxPortfolioNotionalMinor) {
     return RiskReject::kPortfolioLimit;
+  }
+  if (config_.concentrationLimit <= 0.0) {
+    return RiskReject::kConcentration;  // unset concentration limit fails closed
   }
   if (config_.maxPortfolioNotionalMinor > 0) {
     // Exact integer comparison in basis points: absAfter / maxPortfolio > limit. Comparing

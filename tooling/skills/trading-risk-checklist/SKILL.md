@@ -13,7 +13,8 @@ description: "Pre-trade risk checklist, live-gating rules and go-live checklist 
 - [ ] Open orders total and per symbol; order rate below OpenD limit with headroom
 - [ ] Cash/buying power incl. pending orders
 - [ ] Daily loss (realized+unrealized), drawdown, per-strategy loss
-- [ ] Self-trade prevention, duplicate suppression, fat-finger
+- [x] Self-trade prevention, duplicate suppression, fat-finger (implemented)
+- [ ] Session/auction check, cash/buying power, drawdown (NOT implemented yet)
 - [ ] Overflow-safe arithmetic; unset limit = reject
 
 ## Live gating
@@ -26,3 +27,9 @@ description: "Pre-trade risk checklist, live-gating rules and go-live checklist 
 - [ ] Kill switch drill passed; kill -9 restart drill passed
 - [ ] Alerts fire in staged failure test; no secrets in logs
 - [ ] Prod limits reviewed by CODEOWNERS
+
+## Reviewer hints (from the P2 review)
+- Every reject path that trips a halt must also cancel resting orders.
+- A reduce-only order must pass even after a loss/order-count breach.
+- "Unset" limits (0) must reject, never mean unlimited: check `concentrationLimit`, daily loss, notional caps.
+- Live gate inputs need `today` from a trusted clock; a stale or invented promotion log must not pass.

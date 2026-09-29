@@ -14,7 +14,15 @@
 #include "Qot_UpdateBasicQot.pb.h"
 #include "Trd_GetAccList.pb.h"
 #include "Trd_GetFunds.pb.h"
+#include "Trd_GetOrderFillList.pb.h"
+#include "Trd_GetOrderList.pb.h"
 #include "Trd_GetPositionList.pb.h"
+#include "Trd_ModifyOrder.pb.h"
+#include "Trd_PlaceOrder.pb.h"
+#include "Trd_SubAccPush.pb.h"
+#include "Trd_UnlockTrade.pb.h"
+#include "Trd_UpdateOrder.pb.h"
+#include "Trd_UpdateOrderFill.pb.h"
 #include "futu_trader/opend/framing.hpp"
 #include "futu_trader/opend/proto_ids.hpp"
 
@@ -82,6 +90,19 @@ struct MockOpenD::Impl {
   std::atomic<std::size_t> subs{0};
   std::atomic<std::size_t> keepAlives{0};
 
+  // Trading state (guarded by mu).
+  std::vector<MockOrder> orderBook;
+  std::vector<MockFill> fillBook;
+  std::string unlockMd5;
+  std::string nextPlaceError;
+  int nextPlaceRetType{-1};
+  std::vector<std::uint64_t> accPush;
+  std::map<std::uint64_t, std::uint32_t> lastPacketSerial;  // replay protection per connID
+  std::uint64_t nextOrderId{5000};
+  std::size_t placeCount{0};
+  std::size_t unlockCount{0};
+  bool suppressPushes{false};
+
   // Takes one unit of a fault counter if available.
   bool take(int Faults::*counter) {
     std::scoped_lock lock(mu);
@@ -108,6 +129,9 @@ struct MockOpenD::Impl {
       return;
     }
     const std::string body = msg.SerializeAsString();
+    if (take(&Faults::wrongProtoIdResponses)) {
+      protoId += 1;
+    }
     auto frame = op::encodeFrame(protoId, serial,
                                  reinterpret_cast<const std::uint8_t*>(body.data()), body.size());
     if (take(&Faults::disconnectMidFrame)) {
@@ -148,9 +172,10 @@ struct MockOpenD::Impl {
   }
 
   template <typename Rsp>
-  void sendError(Conn& sock, std::uint32_t protoId, std::uint32_t serial, const std::string& msg) {
+  void sendError(Conn& sock, std::uint32_t protoId, std::uint32_t serial, const std::string& msg,
+                 int retType = Common::RetType_Failed) {
     Rsp rsp;
-    rsp.set_rettype(Common::RetType_Failed);
+    rsp.set_rettype(retType);
     rsp.set_retmsg(msg);
     send(sock, protoId, serial, rsp);
   }
@@ -314,7 +339,7 @@ struct MockOpenD::Impl {
           for (const auto& p : positions) {
             auto* pos = rsp.mutable_s2c()->add_positionlist();
             pos->set_positionid(id++);
-            pos->set_positionside(0);
+            pos->set_positionside(p.side);
             pos->set_code(p.code);
             pos->set_name(p.code);
             pos->set_qty(p.qty);
@@ -328,9 +353,227 @@ struct MockOpenD::Impl {
         send(sock, frame.protoId, frame.serial, rsp);
         break;
       }
+      case kTrdUnlockTrade: {
+        Trd_UnlockTrade::Request req;
+        req.ParseFromArray(data, size);
+        bool ok = true;
+        {
+          std::scoped_lock lock(mu);
+          ++unlockCount;
+          ok = unlockMd5.empty() || req.c2s().pwdmd5() == unlockMd5;
+        }
+        if (ok) {
+          send(sock, frame.protoId, frame.serial, okResponse<Trd_UnlockTrade::Response>());
+        } else {
+          sendError<Trd_UnlockTrade::Response>(sock, frame.protoId, frame.serial, "wrong password");
+        }
+        break;
+      }
+      case kTrdSubAccPush: {
+        Trd_SubAccPush::Request req;
+        req.ParseFromArray(data, size);
+        {
+          std::scoped_lock lock(mu);
+          accPush.assign(req.c2s().accidlist().begin(), req.c2s().accidlist().end());
+        }
+        send(sock, frame.protoId, frame.serial, okResponse<Trd_SubAccPush::Response>());
+        break;
+      }
+      case kTrdPlaceOrder: {
+        Trd_PlaceOrder::Request req;
+        req.ParseFromArray(data, size);
+        std::string why;
+        if (!checkPacket(req.c2s().packetid(), why)) {
+          sendError<Trd_PlaceOrder::Response>(sock, frame.protoId, frame.serial, why);
+          break;
+        }
+        std::string forcedError;
+        int forcedRetType = Common::RetType_Failed;
+        MockOrder created;
+        {
+          std::scoped_lock lock(mu);
+          ++placeCount;
+          forcedError.swap(nextPlaceError);
+          forcedRetType = nextPlaceRetType;
+          nextPlaceRetType = Common::RetType_Failed;
+          if (forcedError.empty()) {
+            created.orderId = nextOrderId++;
+            created.remark = req.c2s().remark();
+            created.code = req.c2s().code();
+            created.trdSide = req.c2s().trdside();
+            created.qty = req.c2s().qty();
+            created.price = req.c2s().price();
+            created.status = 5;
+            created.trdEnv = req.c2s().header().trdenv();
+            created.accId = req.c2s().header().accid();
+            orderBook.push_back(created);
+          }
+        }
+        if (!forcedError.empty()) {
+          sendError<Trd_PlaceOrder::Response>(sock, frame.protoId, frame.serial, forcedError,
+                                              forcedRetType);
+          break;
+        }
+        auto rsp = okResponse<Trd_PlaceOrder::Response>();
+        rsp.mutable_s2c()->mutable_header()->CopyFrom(req.c2s().header());
+        rsp.mutable_s2c()->set_orderid(created.orderId);
+        rsp.mutable_s2c()->set_orderidex("EX" + std::to_string(created.orderId));
+        send(sock, frame.protoId, frame.serial,
+             rsp);  // may be dropped by a fault: order still exists
+        pushOrder(created);
+        break;
+      }
+      case kTrdModifyOrder: {
+        Trd_ModifyOrder::Request req;
+        req.ParseFromArray(data, size);
+        std::string why;
+        if (!checkPacket(req.c2s().packetid(), why)) {
+          sendError<Trd_ModifyOrder::Response>(sock, frame.protoId, frame.serial, why);
+          break;
+        }
+        bool found = false;
+        MockOrder updated;
+        {
+          std::scoped_lock lock(mu);
+          for (auto& o : orderBook) {
+            if (o.orderId == req.c2s().orderid()) {
+              found = true;
+              if (req.c2s().modifyorderop() == Trd_Common::ModifyOrderOp_Cancel) {
+                o.status = 15;  // Cancelled_All
+              } else {
+                o.qty = req.c2s().qty();
+                o.price = req.c2s().price();
+              }
+              updated = o;
+            }
+          }
+        }
+        if (!found) {
+          sendError<Trd_ModifyOrder::Response>(sock, frame.protoId, frame.serial, "no such order");
+          break;
+        }
+        auto rsp = okResponse<Trd_ModifyOrder::Response>();
+        rsp.mutable_s2c()->mutable_header()->CopyFrom(req.c2s().header());
+        rsp.mutable_s2c()->set_orderid(updated.orderId);
+        send(sock, frame.protoId, frame.serial, rsp);
+        pushOrder(updated);
+        break;
+      }
+      case kTrdGetOrderList: {
+        Trd_GetOrderList::Request req;
+        req.ParseFromArray(data, size);
+        auto rsp = okResponse<Trd_GetOrderList::Response>();
+        rsp.mutable_s2c()->mutable_header()->CopyFrom(req.c2s().header());
+        {
+          std::scoped_lock lock(mu);
+          for (const auto& o : orderBook) {
+            if (o.accId == req.c2s().header().accid() && o.trdEnv == req.c2s().header().trdenv()) {
+              fillOrder(rsp.mutable_s2c()->add_orderlist(), o);
+            }
+          }
+        }
+        send(sock, frame.protoId, frame.serial, rsp);
+        break;
+      }
+      case kTrdGetOrderFillList: {
+        Trd_GetOrderFillList::Request req;
+        req.ParseFromArray(data, size);
+        auto rsp = okResponse<Trd_GetOrderFillList::Response>();
+        rsp.mutable_s2c()->mutable_header()->CopyFrom(req.c2s().header());
+        {
+          std::scoped_lock lock(mu);
+          for (const auto& f : fillBook) {
+            fillFill(rsp.mutable_s2c()->add_orderfilllist(), f);
+          }
+        }
+        send(sock, frame.protoId, frame.serial, rsp);
+        break;
+      }
       default:
         break;  // unknown commands are ignored: the client should time out, not crash
     }
+  }
+
+  static void fillHeader(Trd_Common::TrdHeader* out, const MockOrder& o) {
+    out->set_trdenv(o.trdEnv);
+    out->set_accid(o.accId);
+    out->set_trdmarket(Trd_Common::TrdMarket_HK);
+  }
+
+  static void fillOrder(Trd_Common::Order* out, const MockOrder& o) {
+    out->set_trdside(o.trdSide);
+    out->set_ordertype(Trd_Common::OrderType_Normal);
+    out->set_orderstatus(o.status);
+    out->set_orderid(o.orderId);
+    out->set_orderidex("EX" + std::to_string(o.orderId));
+    out->set_code(o.code);
+    out->set_name(o.code);
+    out->set_qty(o.qty);
+    out->set_price(o.price);
+    out->set_createtime("2026-09-30 10:00:00");
+    out->set_updatetime("2026-09-30 10:00:01");
+    out->set_fillqty(o.fillQty);
+    out->set_fillavgprice(o.fillAvg);
+    out->set_remark(o.remark);
+    out->set_updatetimestamp(1.0e9);
+  }
+
+  static void fillFill(Trd_Common::OrderFill* out, const MockFill& f) {
+    out->set_trdside(f.trdSide);
+    out->set_fillid(1);
+    out->set_fillidex(f.fillId);
+    out->set_orderid(f.orderId);
+    out->set_code(f.code);
+    out->set_name(f.code);
+    out->set_qty(f.qty);
+    out->set_price(f.price);
+    out->set_createtime("2026-09-30 10:00:02");
+    out->set_status(0);
+  }
+
+  void broadcast(std::uint32_t id, const google::protobuf::Message& msg) {
+    const std::string body = msg.SerializeAsString();
+    const auto frame =
+        op::encodeFrame(id, 0, reinterpret_cast<const std::uint8_t*>(body.data()), body.size());
+    std::vector<std::shared_ptr<Conn>> targets;
+    {
+      std::scoped_lock lock(mu);
+      if (suppressPushes) {
+        return;
+      }
+      targets = sockets;
+    }
+    for (auto& conn : targets) {
+      conn->write(frame);
+    }
+  }
+
+  void pushOrder(const MockOrder& o) {
+    Trd_UpdateOrder::Response push;
+    push.set_rettype(Common::RetType_Succeed);
+    fillHeader(push.mutable_s2c()->mutable_header(), o);
+    fillOrder(push.mutable_s2c()->mutable_order(), o);
+    broadcast(op::protoId::kTrdUpdateOrder, push);
+  }
+
+  void pushFill(const MockFill& f, const MockOrder& o) {
+    Trd_UpdateOrderFill::Response push;
+    push.set_rettype(Common::RetType_Succeed);
+    fillHeader(push.mutable_s2c()->mutable_header(), o);
+    fillFill(push.mutable_s2c()->mutable_orderfill(), f);
+    broadcast(op::protoId::kTrdUpdateOrderFill, push);
+  }
+
+  // Returns false (and fills `why`) if the write's PacketID is a replay.
+  bool checkPacket(const Common::PacketID& packet, std::string& why) {
+    std::scoped_lock lock(mu);
+    auto& last = lastPacketSerial[packet.connid()];
+    if (packet.serialno() <= last) {
+      why = "replayed or out-of-order packet id";
+      return false;
+    }
+    last = packet.serialno();
+    return true;
   }
 
   void armAccept() {
@@ -438,6 +681,106 @@ void MockOpenD::setFundsCash(double cash) {
 void MockOpenD::rejectNextSubscribe(bool reject) {
   std::scoped_lock lock(impl_->mu);
   impl_->rejectSub = reject;
+}
+
+void MockOpenD::setUnlockPassword(const std::string& md5) {
+  std::scoped_lock lock(impl_->mu);
+  impl_->unlockMd5 = md5;
+}
+void MockOpenD::rejectNextPlace(const std::string& message) {
+  std::scoped_lock lock(impl_->mu);
+  impl_->nextPlaceError = message;
+}
+void MockOpenD::failNextPlaceWithRetType(int retType, const std::string& message) {
+  std::scoped_lock lock(impl_->mu);
+  impl_->nextPlaceError = message;
+  impl_->nextPlaceRetType = retType;
+}
+void MockOpenD::setSuppressPushes(bool suppress) {
+  std::scoped_lock lock(impl_->mu);
+  impl_->suppressPushes = suppress;
+}
+bool MockOpenD::fillOrderByRemark(const std::string& remark, double qty, double price) {
+  MockOrder snapshot;
+  MockFill fill;
+  {
+    std::scoped_lock lock(impl_->mu);
+    MockOrder* target = nullptr;
+    for (auto& o : impl_->orderBook) {
+      if (o.remark == remark) {
+        target = &o;
+      }
+    }
+    if (target == nullptr) {
+      return false;
+    }
+    const double total = target->fillQty + qty;
+    target->fillAvg = ((target->fillAvg * target->fillQty) + (price * qty)) / total;
+    target->fillQty = total;
+    target->status = total >= target->qty ? 11 : 10;  // Filled_All / Filled_Part
+    snapshot = *target;
+    fill.fillId = "F" + std::to_string(impl_->fillBook.size() + 1);
+    fill.orderId = target->orderId;
+    fill.code = target->code;
+    fill.trdSide = target->trdSide;
+    fill.qty = qty;
+    fill.price = price;
+    impl_->fillBook.push_back(fill);
+  }
+  impl_->pushFill(fill, snapshot);
+  impl_->pushOrder(snapshot);
+  return true;
+}
+bool MockOpenD::setStatusByRemark(const std::string& remark, int status) {
+  MockOrder snapshot;
+  {
+    std::scoped_lock lock(impl_->mu);
+    bool found = false;
+    for (auto& o : impl_->orderBook) {
+      if (o.remark == remark) {
+        o.status = status;
+        snapshot = o;
+        found = true;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  impl_->pushOrder(snapshot);
+  return true;
+}
+void MockOpenD::injectOrder(const MockOrder& order) {
+  std::scoped_lock lock(impl_->mu);
+  MockOrder copy = order;
+  if (copy.orderId == 0) {
+    copy.orderId = impl_->nextOrderId++;
+  }
+  impl_->orderBook.push_back(copy);
+}
+void MockOpenD::injectFill(const MockFill& fill) {
+  std::scoped_lock lock(impl_->mu);
+  impl_->fillBook.push_back(fill);
+}
+std::vector<MockOrder> MockOpenD::orders() const {
+  std::scoped_lock lock(impl_->mu);
+  return impl_->orderBook;
+}
+std::vector<MockFill> MockOpenD::fills() const {
+  std::scoped_lock lock(impl_->mu);
+  return impl_->fillBook;
+}
+std::size_t MockOpenD::placeRequests() const {
+  std::scoped_lock lock(impl_->mu);
+  return impl_->placeCount;
+}
+std::size_t MockOpenD::unlockRequests() const {
+  std::scoped_lock lock(impl_->mu);
+  return impl_->unlockCount;
+}
+std::vector<std::uint64_t> MockOpenD::accPushIds() const {
+  std::scoped_lock lock(impl_->mu);
+  return impl_->accPush;
 }
 
 void MockOpenD::dropAllConnections() {

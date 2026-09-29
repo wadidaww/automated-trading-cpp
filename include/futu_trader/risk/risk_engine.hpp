@@ -13,7 +13,7 @@ struct RiskConfig {
   Money maxPortfolioNotionalMinor{0};
   Money maxDailyLossMinor{0};
   std::size_t maxOpenOrders{0};
-  double concentrationLimit{1.0};
+  double concentrationLimit{0.0};  // fraction of the portfolio cap; 0 = unset = reject
 };
 
 /** Why a pre-trade check rejected an order. kOk means the order may be placed. */
@@ -26,6 +26,18 @@ enum class RiskReject : uint8_t {
   kPortfolioLimit,
   kConcentration,
   kOverflow,
+  // Added by oms::PreTradeRisk (the fuller chain layered on top of RiskEngine).
+  kKillSwitch,
+  kUnknownInstrument,
+  kLotSize,
+  kTickSize,
+  kPriceBand,
+  kStaleQuote,
+  kMaxOrderNotional,
+  kShortSale,
+  kRateLimit,
+  kUnresolvedOrder,
+  kSelfTrade,
 };
 
 const char* toString(RiskReject reason);
@@ -47,11 +59,12 @@ class DrawdownMonitor {
 
 /**
  * Stateless pre-trade risk check. Every limit defaults to zero, so a default-constructed
- * RiskConfig rejects everything (fail closed).
+ * RiskConfig rejects everything that adds exposure (fail closed). An unset limit never means
+ * "unlimited".
  *
  * `positions` holds signed per-symbol notional (long > 0, short < 0). `portfolioNotional` is the
- * current gross notional. Orders that reduce exposure are checked only for validity, open-order
- * and daily-loss limits.
+ * current gross notional. Orders that strictly reduce exposure are checked only for validity and
+ * overflow: after a breach (daily loss, order-count) the system must still be able to flatten.
  */
 class RiskEngine {
  public:

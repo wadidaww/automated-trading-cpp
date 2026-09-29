@@ -13,6 +13,14 @@ using FeatureVector = std::vector<double>;
 
 enum class SignalAction : uint8_t { kBuy, kSell, kHold };
 
+enum class Side : uint8_t { kBuy, kSell };
+
+/** Futu trading environment. Paper trading is kSimulate; kReal moves real money. */
+enum class TrdEnv : uint8_t { kSimulate, kReal };
+
+/** Signed direction multiplier: +1 for buy, -1 for sell. */
+constexpr std::int64_t sideSign(Side side) { return side == Side::kBuy ? 1 : -1; }
+
 struct Signal {
   SignalAction action{SignalAction::kHold};
   double confidence{0.0};
@@ -38,7 +46,8 @@ enum class OrderState : uint8_t {
 struct Order {
   std::string orderId;
   std::string symbol;
-  std::int64_t quantity{0};
+  Side side{Side::kBuy};
+  std::int64_t quantity{0};  // always positive; direction is carried by `side`
   Money limitPriceMinor{0};
   OrderType type{OrderType::kLimit};
   OrderState state{OrderState::kPending};

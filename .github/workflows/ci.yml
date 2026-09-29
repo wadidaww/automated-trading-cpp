@@ -7,24 +7,54 @@ on:
     branches: [main, develop]
 
 jobs:
-  build-test-lint:
+  build-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [ci, tsan]  # ci = asan+ubsan; tsan = ThreadSanitizer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build (warnings are errors)
+        run: cmake --build --preset ${{ matrix.preset }}
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+  lint:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Ninja and CMake
-        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy clang-format gcovr
-      - name: Configure
-        run: cmake --preset ci
-      - name: Build
-        run: cmake --build --preset ci
-      - name: Test
-        run: ctest --test-dir build/ci --output-on-failure
-      - name: clang-tidy
-        run: find src -name '*.cpp' -print0 | xargs -0 -I{} clang-tidy {} -- -std=c++20 -Iinclude
-      - name: clang-format check
-        continue-on-error: true
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev clang-tidy clang-format
+      - name: Configure (exports compile_commands.json)
+        run: cmake --preset dev
+      - name: clang-format
         run: clang-format --dry-run --Werror $(find include src tests -name '*.[hc]pp')
-      - name: Coverage
-        run: gcovr -r . --html --html-details -o build/ci/coverage.html || true
+      - name: clang-tidy
+        run: find src -name '*.cpp' -print0 | xargs -0 clang-tidy -p build/dev
+
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev gcovr
+      - name: Configure with coverage
+        run: >
+          cmake -S . -B build/cov -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="--coverage -O0"
+          -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+      - name: Build and test
+        run: cmake --build build/cov && ctest --test-dir build/cov --output-on-failure
+      - name: Coverage gate (line coverage of src/)
+        run: gcovr -r . --filter 'src/' --exclude 'src/main.cpp' --exclude 'src/train_main.cpp' --fail-under-line 80

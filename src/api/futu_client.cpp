@@ -15,7 +15,7 @@ bool FutuClient::connect() {
   } else {
     connected_ = true;
   }
-  tradeUnlocked_ = !config_.requireUnlockTrade;
+  tradeUnlocked_ = connected_ && !config_.requireUnlockTrade;
   return connected_;
 }
 
@@ -70,8 +70,8 @@ std::string FutuClient::placeOrder(const Order& order) {
   }
   if (config_.apiInvoker) {
     std::ostringstream payload;
-    payload << "symbol=" << order.symbol << ";qty=" << order.quantity
-            << ";priceMinor=" << order.limitPriceMinor;
+    payload << "symbol=" << order.symbol << ";side=" << (order.side == Side::kBuy ? "buy" : "sell")
+            << ";qty=" << order.quantity << ";priceMinor=" << order.limitPriceMinor;
     if (!callOpenApi(futuOpenApiCommand::placeOrder, payload.str()).success) {
       return "";
     }

@@ -1,23 +1,80 @@
-#include <cassert>
+#include <gtest/gtest.h>
+
+#include <cstdint>
 #include <filesystem>
-#include <vector>
+#include <fstream>
+#include <string>
 
 #include "futu_trader/model/gradient_boosting_model.hpp"
 #include "futu_trader/model/mean_reversion_model.hpp"
+#include "futu_trader/model/model_trainer.hpp"
 
-int main() {
-  futu_trader::MeanReversionModel mr(-1.0, 1.0);
-  assert(mr.predict({-2.0}).action == futu_trader::SignalAction::kBuy);
-  assert(mr.predict({2.0}).action == futu_trader::SignalAction::kSell);
+using namespace futu_trader;
 
-  futu_trader::GradientBoostingModel gb({1.0, -0.5});
-  const auto sig = gb.predict({1.0, 0.0});
-  assert(sig.action == futu_trader::SignalAction::kBuy || sig.action == futu_trader::SignalAction::kHold);
+TEST(MeanReversionModel, BuysLowSellsHigh) {
+  MeanReversionModel mr(-1.0, 1.0);
+  EXPECT_EQ(mr.predict({-2.0}).action, SignalAction::kBuy);
+  EXPECT_EQ(mr.predict({2.0}).action, SignalAction::kSell);
+  EXPECT_EQ(mr.predict({0.0}).action, SignalAction::kHold);
+}
 
-  const std::string path = (std::filesystem::temp_directory_path() / "gb_model_test.bin").string();
-  assert(gb.save(path));
-  auto gb2 = futu_trader::GradientBoostingModel::load(path);
-  assert(gb2.predict({1.0, 0.0}).action == gb.predict({1.0, 0.0}).action);
-  std::filesystem::remove(path);
-  return 0;
+TEST(GradientBoostingModel, ScoreAboveThresholdBuys) {
+  GradientBoostingModel gb({1.0, -0.5});
+  EXPECT_EQ(gb.predict({1.0, 0.0}).action, SignalAction::kBuy);
+  EXPECT_EQ(gb.predict({-1.0, 0.0}).action, SignalAction::kSell);
+  EXPECT_EQ(gb.predict({0.1, 0.0}).action, SignalAction::kHold);
+}
+
+class ModelFile : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    path_ = (std::filesystem::temp_directory_path() / "futu_gb_model_test.bin").string();
+  }
+  void TearDown() override { std::filesystem::remove(path_); }
+  std::string path_;
+};
+
+TEST_F(ModelFile, RoundTrips) {
+  GradientBoostingModel gb({1.0, -0.5});
+  ASSERT_TRUE(gb.save(path_));
+  const auto loaded = GradientBoostingModel::load(path_);
+  EXPECT_EQ(loaded.predict({1.0, 0.0}).action, SignalAction::kBuy);
+}
+
+TEST_F(ModelFile, CorruptHeaderDoesNotAllocateHugeBuffer) {
+  // Regression: the header of the old placeholder file ("trained-model") decoded to a huge size.
+  {
+    std::ofstream out(path_, std::ios::binary);
+    out << "trained-model";
+  }
+  const auto loaded = GradientBoostingModel::load(path_);
+  EXPECT_EQ(loaded.predict({10.0}).action, SignalAction::kHold);
+}
+
+TEST_F(ModelFile, TruncatedPayloadIsRejected) {
+  {
+    std::ofstream out(path_, std::ios::binary);
+    const std::uint64_t size = 4;
+    out.write(reinterpret_cast<const char*>(&size), sizeof(size));
+    const double one = 1.0;
+    out.write(reinterpret_cast<const char*>(&one), sizeof(one));
+  }
+  EXPECT_EQ(GradientBoostingModel::load(path_).predict({10.0}).action, SignalAction::kHold);
+}
+
+TEST(ModelTrainer, RejectsMismatchedInputs) {
+  ModelTrainer trainer;
+  // labels shorter than features
+  auto m1 = trainer.train({{1.0}, {2.0}}, {1});
+  EXPECT_EQ(m1.predict({10.0}).action, SignalAction::kHold);
+  // ragged rows
+  auto m2 = trainer.train({{1.0, 2.0}, {3.0}}, {1, 1});
+  EXPECT_EQ(m2.predict({10.0, 10.0}).action, SignalAction::kHold);
+}
+
+TEST(ModelTrainer, LearnsDirection) {
+  ModelTrainer trainer;
+  auto model = trainer.train({{2.0}, {3.0}, {-2.0}, {-3.0}}, {1, 1, -1, -1});
+  EXPECT_EQ(model.predict({2.0}).action, SignalAction::kBuy);
+  EXPECT_EQ(model.predict({-2.0}).action, SignalAction::kSell);
 }

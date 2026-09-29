@@ -3,14 +3,7 @@
   "version-string": "0.1.0",
   "builtin-baseline": "7f4f5f8f90dc1573df93e64d26f95ebae4fb92f0",
   "dependencies": [
-    "asio",
-    "cpr",
-    "protobuf",
-    "nlohmann-json",
-    "eigen3",
-    "yaml-cpp",
-    "spdlog",
-    "date",
-    "gtest"
+    "gtest",
+    "benchmark"
   ]
 }

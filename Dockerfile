@@ -1,13 +1,15 @@
 FROM ubuntu:24.04 AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake ninja-build git ca-certificates && \
+    build-essential cmake ninja-build git ca-certificates \
+    libprotobuf-dev protobuf-compiler libboost-dev && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 RUN cmake --preset release && cmake --build --preset release
 
 FROM ubuntu:24.04 AS runtime
-RUN useradd -m -u 10001 trader
+RUN apt-get update && apt-get install -y --no-install-recommends libprotobuf32t64 && \
+    rm -rf /var/lib/apt/lists/* && useradd -m -u 10001 trader
 WORKDIR /app
 COPY --from=builder /app/build/release/futu_trader /app/futu_trader
 COPY config /app/config

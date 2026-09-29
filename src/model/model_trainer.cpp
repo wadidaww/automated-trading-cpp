@@ -8,10 +8,15 @@ namespace futu_trader {
 
 GradientBoostingModel ModelTrainer::train(const std::vector<FeatureVector>& features,
                                           const std::vector<int>& labels) const {
-  if (features.empty() || labels.empty()) {
+  if (features.empty() || features.size() != labels.size()) {
     return GradientBoostingModel({});
   }
   const std::size_t dims = features.front().size();
+  for (const auto& row : features) {
+    if (row.size() != dims) {
+      return GradientBoostingModel({});
+    }
+  }
   std::vector<double> weights(dims, 0.0);
   for (std::size_t i = 0; i < features.size(); ++i) {
     const double y = labels[i] > 0 ? 1.0 : -1.0;

@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.25)
+
+# Use vcpkg when available (VCPKG_ROOT), otherwise fall back to system packages.
+if(NOT CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT}
+   AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+endif()
+
 project(futu_quant_trader VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -8,8 +15,26 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(FUTU_TRADER_BUILD_TESTS "Build tests" ON)
+option(FUTU_TRADER_WERROR "Treat warnings as errors" OFF)
+
+find_package(Threads REQUIRED)
+find_package(Protobuf REQUIRED)
+find_package(Boost REQUIRED)  # header-only Boost.Asio
+
+# Official Futu OpenD protobuf definitions, vendored and version-pinned (see PROTO_VERSION).
+file(GLOB FUTU_PROTO_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/futu_proto/*.proto)
+set(Protobuf_IMPORT_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/futu_proto)
+protobuf_generate_cpp(FUTU_PROTO_SRCS FUTU_PROTO_HDRS ${FUTU_PROTO_FILES})
+add_library(futu_proto STATIC ${FUTU_PROTO_SRCS})  # generated code: no project warning flags
+target_include_directories(futu_proto SYSTEM PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(futu_proto PUBLIC protobuf::libprotobuf)
+target_compile_options(futu_proto PRIVATE -w)  # generated code; GCC 14 false-positive warnings
 
 add_library(futu_trader
+  src/opend/sha1.cpp
+  src/opend/framing.cpp
+  src/opend/connection.cpp
+  src/opend/client.cpp
   src/api/futu_client.cpp
   src/data/data_normalizer.cpp
   src/data/market_data.cpp
@@ -27,7 +52,11 @@ add_library(futu_trader
 )
 
 target_include_directories(futu_trader PUBLIC include)
-target_compile_options(futu_trader PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(futu_trader PUBLIC futu_proto Threads::Threads Boost::headers)
+target_compile_options(futu_trader PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
+if(FUTU_TRADER_WERROR)
+  target_compile_options(futu_trader PRIVATE -Werror)
+endif()
 
 add_executable(futu_trader_app src/main.cpp)
 target_link_libraries(futu_trader_app PRIVATE futu_trader)
@@ -39,28 +68,33 @@ target_link_libraries(futu_model_train PRIVATE futu_trader)
 if(FUTU_TRADER_BUILD_TESTS)
   include(CTest)
   if(BUILD_TESTING)
-    add_executable(data_normalizer_test tests/unit/data_normalizer_test.cpp)
-    target_link_libraries(data_normalizer_test PRIVATE futu_trader)
-    add_test(NAME data_normalizer_test COMMAND data_normalizer_test)
+    find_package(GTest REQUIRED)
+    include(GoogleTest)
 
-    add_executable(model_test tests/unit/model_test.cpp)
-    target_link_libraries(model_test PRIVATE futu_trader)
-    add_test(NAME model_test COMMAND model_test)
+    # Mock OpenD speaking the real wire protocol; test tool with fault injection.
+    add_library(futu_mock_opend STATIC tools/mock_opend/mock_opend.cpp)
+    target_include_directories(futu_mock_opend PUBLIC tools/mock_opend)
+    target_link_libraries(futu_mock_opend PUBLIC futu_trader)
 
-    add_executable(risk_and_order_test tests/unit/risk_and_order_test.cpp)
-    target_link_libraries(risk_and_order_test PRIVATE futu_trader)
-    add_test(NAME risk_and_order_test COMMAND risk_and_order_test)
-
-    add_executable(pipeline_backtester_test tests/unit/pipeline_backtester_test.cpp)
-    target_link_libraries(pipeline_backtester_test PRIVATE futu_trader)
-    add_test(NAME pipeline_backtester_test COMMAND pipeline_backtester_test)
-
-    add_executable(futu_integration_tests tests/integration/pipeline_integration_test.cpp)
-    target_link_libraries(futu_integration_tests PRIVATE futu_trader)
-    add_test(NAME futu_integration_tests COMMAND futu_integration_tests)
+    add_executable(futu_unit_tests
+      tests/unit/opend_framing_test.cpp
+      tests/unit/opend_client_test.cpp
+      tests/unit/data_normalizer_test.cpp
+      tests/unit/model_test.cpp
+      tests/unit/risk_test.cpp
+      tests/unit/order_manager_test.cpp
+      tests/unit/futu_client_test.cpp
+      tests/unit/backtester_test.cpp
+      tests/unit/pipeline_test.cpp
+    )
+    target_link_libraries(futu_unit_tests PRIVATE futu_trader futu_mock_opend GTest::gtest_main)
+    gtest_discover_tests(futu_unit_tests)
 
     add_executable(futu_e2e_tests tests/e2e/e2e_smoke_test.cpp)
-    target_link_libraries(futu_e2e_tests PRIVATE futu_trader)
-    add_test(NAME futu_e2e_tests COMMAND futu_e2e_tests)
+    target_link_libraries(futu_e2e_tests PRIVATE GTest::gtest_main)
+    target_compile_definitions(futu_e2e_tests PRIVATE
+      FUTU_TRADER_BIN="$<TARGET_FILE:futu_trader_app>")
+    add_dependencies(futu_e2e_tests futu_trader_app)
+    gtest_discover_tests(futu_e2e_tests)
   endif()
 endif()

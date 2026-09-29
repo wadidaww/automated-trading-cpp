@@ -1,6 +1,9 @@
 #include "futu_trader/model/gradient_boosting_model.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
 
 namespace futu_trader {
@@ -47,6 +50,15 @@ GradientBoostingModel GradientBoostingModel::load(const std::string& path) {
   std::uint64_t size = 0;
   in.read(reinterpret_cast<char*>(&size), sizeof(size));
   if (!in) {
+    return GradientBoostingModel({});
+  }
+  // Never trust the header: the payload must fit exactly in the file, otherwise a corrupt or
+  // foreign file could request a huge allocation.
+  std::error_code ec;
+  const auto fileSize = std::filesystem::file_size(path, ec);
+  constexpr std::uint64_t kHeaderBytes = sizeof(std::uint64_t);
+  if (ec || fileSize < kHeaderBytes || size != (fileSize - kHeaderBytes) / sizeof(double) ||
+      (fileSize - kHeaderBytes) % sizeof(double) != 0) {
     return GradientBoostingModel({});
   }
   std::vector<double> weights(size, 0.0);

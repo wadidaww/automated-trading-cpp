@@ -2,7 +2,8 @@
 
 namespace futu_trader {
 
-void PositionTracker::onFill(const std::string& symbol, std::int64_t quantity, Money) {
+void PositionTracker::onFill(const std::string& symbol, std::int64_t quantity,
+                             Money /*fillPriceMinor*/) {
   std::scoped_lock lock(mu_);
   qtyBySymbol_[symbol] += quantity;
 }

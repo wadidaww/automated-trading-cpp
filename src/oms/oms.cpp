@@ -973,6 +973,18 @@ std::size_t Oms::liveOrderCount() const {
   return impl_->liveCount();
 }
 
+std::vector<std::string> Oms::liveOrderIds(const std::string& symbol) const {
+  std::scoped_lock lock(impl_->mu);
+  std::vector<std::string> ids;
+  for (const auto& id : impl_->insertionOrder) {
+    const OrderRecord& rec = impl_->records.at(id);
+    if (rec.symbol == symbol && isLive(rec.state)) {
+      ids.push_back(id);
+    }
+  }
+  return ids;
+}
+
 std::size_t Oms::unresolvedCount() const {
   std::scoped_lock lock(impl_->mu);
   std::size_t count = 0;

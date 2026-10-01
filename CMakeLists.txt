@@ -36,6 +36,15 @@ add_library(futu_trader
   src/oms/pre_trade.cpp
   src/portfolio/fees.cpp
   src/sizing/sizing.cpp
+  src/data/event_log.cpp
+  src/data/csv.cpp
+  src/data/validate.cpp
+  src/backtest/synthetic.cpp
+  src/backtest/metrics.cpp
+  src/backtest/walk_forward.cpp
+  src/backtest/sim_venue.cpp
+  src/backtest/runner.cpp
+  src/strategy/strategies.cpp
   src/portfolio/position_book.cpp
   src/oms/live_gate.cpp
   src/oms/oms.cpp
@@ -74,6 +83,9 @@ add_executable(futu_trader_app src/main.cpp)
 target_link_libraries(futu_trader_app PRIVATE futu_trader)
 set_target_properties(futu_trader_app PROPERTIES OUTPUT_NAME futu_trader)
 
+add_executable(futu_backtest src/backtest_main.cpp)
+target_link_libraries(futu_backtest PRIVATE futu_trader)
+
 add_executable(futu_model_train src/train_main.cpp)
 target_link_libraries(futu_model_train PRIVATE futu_trader)
 
@@ -91,6 +103,10 @@ if(FUTU_TRADER_BUILD_TESTS)
     add_executable(futu_unit_tests
       tests/unit/hk_rules_test.cpp
       tests/unit/order_state_test.cpp
+      tests/unit/data_test.cpp
+      tests/unit/backtest_metrics_test.cpp
+      tests/unit/sim_venue_test.cpp
+      tests/unit/backtest_runner_test.cpp
       tests/unit/sizing_test.cpp
       tests/unit/oms_test.cpp
       tests/unit/oms_integration_test.cpp
@@ -110,6 +126,28 @@ if(FUTU_TRADER_BUILD_TESTS)
     )
     target_link_libraries(futu_unit_tests PRIVATE futu_trader futu_mock_opend GTest::gtest_main)
     gtest_discover_tests(futu_unit_tests)
+
+    # Regression gate: a fixed synthetic backtest must reproduce the committed golden report
+    # exactly, twice in a row (determinism), with the OMS agreeing with the simulated broker.
+    add_test(NAME backtest_golden_meanrev
+             COMMAND futu_backtest --synthetic --seed 42 --count 20000 --strategy meanrev
+                     --check-determinism
+                     --golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/backtest_meanrev_seed42.json)
+    add_test(NAME backtest_golden_maker
+             COMMAND futu_backtest --synthetic --seed 11 --count 20000 --size 200 --strategy maker
+                     --max-daily-loss 900000 --check-determinism
+                     --golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/backtest_maker_seed11.json)
+    add_test(NAME backtest_lookahead_honest_strategy_passes
+             COMMAND futu_backtest --synthetic --seed 5 --count 3000 --strategy meanrev
+                     --check-lookahead)
+    add_test(NAME backtest_lookahead_cheating_strategy_is_rejected
+             COMMAND futu_backtest --synthetic --seed 5 --count 3000 --strategy peeker
+                     --check-lookahead)
+    set_tests_properties(backtest_lookahead_cheating_strategy_is_rejected PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME backtest_golden_random
+             COMMAND futu_backtest --synthetic --seed 7 --count 20000 --strategy random
+                     --check-determinism
+                     --golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/backtest_random_seed7.json)
 
     add_executable(futu_e2e_tests tests/e2e/e2e_smoke_test.cpp)
     target_link_libraries(futu_e2e_tests PRIVATE GTest::gtest_main)

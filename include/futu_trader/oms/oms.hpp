@@ -191,6 +191,8 @@ class Oms {
   std::optional<OrderRecord> order(const std::string& clOrdId) const;
   std::vector<OrderRecord> orders() const;
   std::size_t liveOrderCount() const;
+  /** ClOrdIds of live orders in `symbol`, in submission order (cheaper than copying orders()). */
+  std::vector<std::string> liveOrderIds(const std::string& symbol) const;
   std::size_t unresolvedCount() const;
   std::size_t anomalyCount() const;
   std::vector<JournalEntry> journal() const;

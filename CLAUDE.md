@@ -28,13 +28,22 @@ cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan # Thre
 10. **An ambiguous submit is never a rejection.** Only `kServer`/`kInvalidArg` prove the order does not exist; timeouts, disconnects and unknown OpenD `retType`s leave it `Unknown` until reconciled. An order declared dead by absence stays blocked under its intent key, and its late appearance halts trading.
 11. **Every automatic halt must also cancel** resting orders. Push handlers (`Oms::onOrderUpdate/onFill`, `PushRouter`) only set a flag; the engine thread must call `Oms::serviceHalt()` regularly (submit and reconcile also do). Never call the venue from the OpenD push thread: it delivers the venue's own replies.
 12. Risk-reducing orders bypass loss and order-count limits (flattening must always be possible); everything that adds exposure fails closed on unset limits.
-13. **Check the build's exit code, not a grep of its output.** GCC prints `: error:`; a filter for ` error ` hides failures and you end up testing a stale binary.
+13. **Backtests run the real OMS.** `backtest::runBacktest` drives the same `Oms`, `PreTradeRisk`, `RateLimiter` and `PositionBook` as live trading against `SimVenue` (an `IVenue`). Strategies only get a `StrategyContext` (no future data, no wall clock, no venue). Never add a backtest-only shortcut around the OMS.
+14. **A backtest result is not evidence until it passes the gate:** deterministic (same hash twice), OMS reconciles clean against the broker (cash included), golden reports unchanged, honest strategies pass `--check-lookahead` and the `peeker` canary is rejected. Report trade stats NET of fees, never compare strategies on mid-marked equity alone (use `finalLiquidationEquity`), and never quote Sharpe without its confidence interval and the `ratios_reliable` flag.
+15. **Check the build's exit code, not a grep of its output.** GCC prints `: error:`; a filter for ` error ` hides failures and you end up testing a stale binary.
 
 ## Layout
-`include/futu_trader/<module>/`, `src/<module>/`, `tests/{unit,e2e}`, `tools/mock_opend` (test-only fake OpenD with fault injection), `config/*.yaml`, `tooling/{agents,skills}`.
-Roadmap (P0..P5) is in the approved plan; status: P0 done; P1 (OpenD connectivity) and P2 (OMS, risk, portfolio, live gate) done and tested against the mock only, NOT yet against a real OpenD. P2 was independently reviewed by the risk-manager and security-engineer agents; their findings are fixed or listed under known gaps.
+`include/futu_trader/<module>/`, `src/<module>/`, `tests/{unit,e2e,golden}`, `tools/mock_opend` (test-only fake OpenD with fault injection), `futu_backtest` CLI (`src/backtest_main.cpp`), `config/*.yaml`, `tooling/{agents,skills}`.
+Roadmap (P0..P5) is in the approved plan; status: P0 done; P1 (OpenD connectivity), P2 (OMS, risk, portfolio, live gate) and P3 (backtester) done and tested against the mock/simulator only, NOT yet against a real OpenD. P2 and P3 were independently reviewed (risk-manager, security-engineer, backtest-validator agents); their findings are fixed or listed under known gaps.
+
+## Backtesting
+`futu_backtest --synthetic|--csv|--log ... --strategy meanrev|buyhold|random|maker|peeker [--check-determinism] [--check-lookahead] [--golden F]`; exit codes documented at the top of `src/backtest_main.cpp`. `scripts/run_backtest.sh` is the CI gate. Regenerate goldens with `--update-golden` only for an intended behaviour change, and review the diff.
+Fill model (see `SimVenue`): order latency, finite displayed size consumed per quote (repeated identical quotes are not new liquidity; unknown size = no fill in real runs), strictly trade-through passive fills at the limit price, cancel races, tick/lot/buying-power/sellable checks, HK fees. NOT modelled: queue position, market impact, hidden liquidity, halts/auctions, corporate actions, broker commission unless you pass `--commission-bps/--platform-fee`.
+`detectLookahead` cuts the data right after sampled decisions and requires identical earlier decisions; it finds strategies whose past decisions change without the future, but cannot prove absence of bias. `cutsChecked == 0` counts as a failure.
 
 ## Known gaps (be honest about these)
+- Backtester: single-symbol CLI only (the runner itself handles several); resampling is by sample period with empty periods skipped (no trading calendar, so the overnight gap is one observation); no deflated Sharpe/multiple-testing correction; `walkForwardSplits` exists but no runner uses it yet; the Python research/model-export path is not started; historical data download (`scripts/fetch_historical_data.sh`) and the live recorder are not implemented (the event-log format and replay are).
+- Golden files compare `%.6f` floats; they could differ across compilers/libm for metrics (integer results and the journal hash are exact).
 - `LiveGate` is not wired to a `main` yet: nothing reads `FUTU_LIVE_TRADING`/`--live`, loads the promotion log, or runs the engine loop that must call `serviceHalt()`. There is no runnable trading binary yet (P3/P5).
 - Promotion log is an unauthenticated text file (guards mistakes and staleness, not a local attacker); the trade-password MD5 has no memory-hygiene handling (no zeroing, `RLIMIT_CORE`); the OpenD link is plaintext (loopback enforced, no RSA/AES).
 - Pre-trade chain has no session/auction check, no cash/buying-power check, no drawdown check. Halting cancels orders but does not flatten positions.
@@ -42,8 +51,7 @@ Roadmap (P0..P5) is in the approved plan; status: P0 done; P1 (OpenD connectivit
 - CI/Docker supply chain (unpinned images/actions, no signing/SBOM) is untouched (P5).
 
 ## Known scaffold gaps (not yet real)
-`FutuClient` (legacy) is an in-memory stub; the real `opend::OpenDClient` has no order placement yet (P2); `PositionTracker`/`ModelRegistry`/`DataStore` are unwired;
-`scripts/run_backtest.sh` writes a hard-coded report (its CI gate is meaningless until P3);
+`FutuClient` (legacy) is an in-memory stub and the old `TradingPipeline`/`Backtester` (ISignalModel-based) are legacy too: new work uses `opend::OpenDClient`, `oms::Oms` and `backtest::runBacktest`; `PositionTracker`/`ModelRegistry`/`DataStore` are unwired;
 `scripts/setup_opend.sh`, `deploy-prod.yml` and the `mock-opend` compose service are placeholders.
 
 ## Agents & skills (tracked in `tooling/`, symlinked into `.claude/` locally)

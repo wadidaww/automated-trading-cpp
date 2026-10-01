@@ -12,14 +12,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - run: cmake --preset dev
-      - run: cmake --build --preset dev
-      - run: ./scripts/fetch_historical_data.sh
-      - run: ./scripts/run_backtest.sh
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev
+      - name: Backtest regression gate (deterministic, reconciled, golden)
+        run: ./scripts/run_backtest.sh
       - name: Upload reports
         uses: actions/upload-artifact@v4
         with:
           name: backtest-report
-          path: |
-            data/processed/*.json
-            data/processed/*.html
+          path: data/processed/*.json

@@ -36,6 +36,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev clang-tidy clang-format
       - name: Configure (exports compile_commands.json)
         run: cmake --preset dev
+      - name: Generate protobuf headers (clang-tidy needs the *.pb.h files)
+        run: cmake --build --preset dev --target futu_proto
       - name: clang-format
         run: clang-format --dry-run --Werror $(find include src tests -name '*.[hc]pp')
       - name: clang-tidy

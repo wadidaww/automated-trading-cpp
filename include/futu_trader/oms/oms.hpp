@@ -40,6 +40,17 @@ struct OmsConfig {
   std::int64_t cancelRetryMs{2000};
   /** Held positions whose mark price is older than this block new exposure (fail closed). */
   std::int64_t markMaxAgeMs{60'000};
+  /**
+   * In-memory journal entries kept (oldest dropped first). Durable history belongs in the WAL;
+   * an unbounded in-memory log is a slow memory leak in a process that runs for weeks.
+   */
+  std::size_t journalRetain{200'000};
+  /**
+   * Capacity reserved up front for order bookkeeping. Growing a hash map or vector at a power of
+   * two rehashes/copies everything in one go, which shows up as a multi-millisecond stall on the
+   * engine thread. Sized for a busy day; exceeding it still works, just with a growth hiccup.
+   */
+  std::size_t reserveOrders{50'000};
 };
 
 /** A strategy's request. `intentKey` is its idempotency key: one key never yields two orders. */
@@ -66,7 +77,8 @@ struct OrderRecord {
   bool presumedDead{false};  // declared "never existed" by absence; any later sighting halts
   int missedListings{0};     // consecutive complete listings that did not contain it
   std::int64_t cancelSentAtNs{0};
-  std::string detail;  // last reject / anomaly explanation
+  std::uint64_t seq{0};  // creation order; keys the live-order index
+  std::string detail;    // last reject / anomaly explanation
 };
 
 enum class SubmitStatus : std::uint8_t {
@@ -170,6 +182,12 @@ class Oms {
    */
   HaltReport haltAndCancelAll(const std::string& reason);
   /**
+   * Trips the kill switch and schedules a cancel-all WITHOUT talking to the venue; serviceHalt()
+   * carries it out. For callers that want a halt but must not block (or must not double-send
+   * cancels that another thread already sent).
+   */
+  void requestHalt(const std::string& reason);
+  /**
    * Every automatic trip (reconciliation drift, busted fill, daily loss, ...) schedules a
    * cancel-all; this carries it out. Call it regularly from the engine thread (it is also called
    * by submit() and reconcile()). It talks to the venue, so NEVER call it from the push thread:
@@ -191,6 +209,8 @@ class Oms {
   std::optional<OrderRecord> order(const std::string& clOrdId) const;
   std::vector<OrderRecord> orders() const;
   std::size_t liveOrderCount() const;
+  /** True if any order in `symbol` is live. O(live orders), allocation-free: safe per quote. */
+  bool hasLiveOrder(const std::string& symbol) const;
   /** ClOrdIds of live orders in `symbol`, in submission order (cheaper than copying orders()). */
   std::vector<std::string> liveOrderIds(const std::string& symbol) const;
   std::size_t unresolvedCount() const;

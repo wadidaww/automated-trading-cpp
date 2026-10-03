@@ -30,8 +30,9 @@ void SimVenue::setSinks(OrderSink orderSink, FillSink fillSink) {
 
 Money SimVenue::reservedBuyMills() const {
   Int128 total = 0;
-  for (const auto& [id, order] : orders_) {
-    if (order.terminal || order.pub.side != Side::kBuy) {
+  for (const auto& [id, orderPtr] : open_) {
+    const SimOrder& order = *orderPtr;
+    if (order.pub.side != Side::kBuy) {
       continue;
     }
     const Int128 notional = static_cast<Int128>(order.remaining) * order.pub.priceMills;
@@ -42,9 +43,9 @@ Money SimVenue::reservedBuyMills() const {
 
 std::int64_t SimVenue::reservedSellQty(const std::string& symbol) const {
   std::int64_t total = 0;
-  for (const auto& [id, order] : orders_) {
-    if (!order.terminal && order.pub.side == Side::kSell && order.pub.code == symbol) {
-      total += order.remaining;
+  for (const auto& [id, orderPtr] : open_) {
+    if (orderPtr->pub.side == Side::kSell && orderPtr->pub.code == symbol) {
+      total += orderPtr->remaining;
     }
   }
   return total;
@@ -99,7 +100,8 @@ Result<opend::PlacedOrder> SimVenue::place(const opend::PlaceOrderRequest& reque
   order.sellShort = request.sellShort;
   const std::uint64_t id = order.pub.orderId;
   const std::string idEx = order.pub.orderIdEx;
-  orders_.emplace(id, std::move(order));
+  const auto inserted = orders_.emplace(id, std::move(order));
+  open_[id] = &inserted.first->second;
   schedule(clock_.nowNs() + config_.latencyNs, ActionKind::kActivate, id);
   return opend::PlacedOrder{id, idEx};
 }
@@ -146,7 +148,7 @@ void SimVenue::advance(std::int64_t nowNs) {
         tryMatch(order, quote->second, /*arriving=*/true);
       }
     } else {
-      order.terminal = true;
+      closeOrder(order);
       order.pub.status = order.pub.fillQty > 0 ? kStatusCancelledPart : kStatusCancelledAll;
       emitOrder(order);
     }
@@ -165,8 +167,11 @@ void SimVenue::onQuote(const QuoteEvent& quote) {
     used.bid = 0;
   }
   quotes_[quote.symbol] = quote;
-  for (auto& [id, order] : orders_) {
-    if (order.active && !order.terminal && order.pub.code == quote.symbol) {
+  // A fill can close the order we are on, so step the iterator before touching it.
+  for (auto it = open_.begin(); it != open_.end();) {
+    SimOrder& order = *it->second;
+    ++it;
+    if (order.active && order.pub.code == quote.symbol) {
       tryMatch(order, quote, /*arriving=*/false);
     }
   }
@@ -233,7 +238,7 @@ void SimVenue::fill(SimOrder& order, std::int64_t qty, Money price) {
   order.pub.fillAvgPriceMills = static_cast<Money>(weighted / order.pub.fillQty);
   order.remaining -= qty;
   if (order.remaining == 0) {
-    order.terminal = true;
+    closeOrder(order);
     order.pub.status = kStatusFilledAll;
   } else {
     order.pub.status = kStatusFilledPart;
@@ -243,6 +248,11 @@ void SimVenue::fill(SimOrder& order, std::int64_t qty, Money price) {
     fillSink_(fill);
   }
   emitOrder(order);
+}
+
+void SimVenue::closeOrder(SimOrder& order) {
+  order.terminal = true;
+  open_.erase(order.pub.orderId);
 }
 
 void SimVenue::emitOrder(const SimOrder& order) {

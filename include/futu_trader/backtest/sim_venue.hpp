@@ -109,6 +109,7 @@ class SimVenue final : public oms::IVenue {
   void tryMatch(SimOrder& order, const QuoteEvent& quote, bool arriving);
   void fill(SimOrder& order, std::int64_t qty, Money price);
   void emitOrder(const SimOrder& order);
+  void closeOrder(SimOrder& order);  // marks terminal and drops it from the open index
 
   SimVenueConfig config_;
   const instrument::InstrumentTable& instruments_;
@@ -117,6 +118,10 @@ class SimVenue final : public oms::IVenue {
   FillSink fillSink_;
 
   std::map<std::uint64_t, SimOrder> orders_;  // ordered by id == creation order
+  // Orders that are not yet terminal, in creation order. Reservations and quote matching only ever
+  // concern these, so they must not walk every order placed so far: a long run places thousands.
+  // `orders_` is node-based and never erased from, so these pointers stay valid.
+  std::map<std::uint64_t, SimOrder*> open_;
   std::map<std::pair<std::int64_t, std::uint64_t>, Action> schedule_;
   std::map<std::string, QuoteEvent> quotes_;
   // Displayed size already consumed by our own fills at the current touch. A refreshed quote with

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <deque>
+#include <map>
 #include <set>
 
 namespace futu_trader::oms {
@@ -61,7 +63,13 @@ struct Mark {
 struct Oms::Impl {
   Impl(IVenue& v, PreTradeRisk& r, execution::RateLimiter& rl, execution::KillSwitch& ks,
        portfolio::PositionBook& b, const Clock& c, OmsConfig cfg)
-      : venue(v), risk(r), rate(rl), kill(ks), book(b), clock(c), config(std::move(cfg)) {}
+      : venue(v), risk(r), rate(rl), kill(ks), book(b), clock(c), config(std::move(cfg)) {
+    records.reserve(config.reserveOrders);
+    intentIndex.reserve(config.reserveOrders);
+    venueIndex.reserve(config.reserveOrders);
+    insertionOrder.reserve(config.reserveOrders);
+    book.reserveFills(config.reserveOrders * 2);  // typically 1-2 fills per order
+  }
 
   IVenue& venue;
   PreTradeRisk& risk;
@@ -76,6 +84,12 @@ struct Oms::Impl {
   std::uint64_t seq{0};
   std::unordered_map<std::string, OrderRecord> records;
   std::vector<std::string> insertionOrder;
+  // Live orders only, keyed by creation sequence (so iteration order is deterministic and equals
+  // submission order). Everything that used to scan ALL orders ever placed (risk view, self-trade,
+  // unresolved checks, halt, reconcile) now scans this small set: submit cost no longer grows with
+  // the day's order history. Records are never erased, so these pointers stay valid.
+  std::map<std::uint64_t, OrderRecord*> live;
+  std::uint64_t recordSeq{0};
   std::unordered_map<std::string, std::string> intentIndex;   // intentKey -> clOrdId
   std::unordered_map<std::uint64_t, std::string> venueIndex;  // venueOrderId -> clOrdId
   std::unordered_map<std::string, Mark> marks;
@@ -83,7 +97,7 @@ struct Oms::Impl {
   int failedReconciles{0};
   Money dailyBaseline{0};
   std::optional<Money> baselineCash;
-  std::vector<JournalEntry> journalLog;
+  std::deque<JournalEntry> journalLog;
   std::function<void(const JournalEntry&)> sink;
   // Set by any automatic trip; a thread that may talk to the venue then cancels everything.
   std::atomic<bool> haltRequested{false};
@@ -96,6 +110,9 @@ struct Oms::Impl {
       sink(entry);
     }
     journalLog.push_back(std::move(entry));
+    if (journalLog.size() > config.journalRetain) {
+      journalLog.pop_front();
+    }
   }
 
   void anomaly(const std::string& clOrdId, const std::string& detail) {
@@ -110,11 +127,22 @@ struct Oms::Impl {
     log(JournalKind::kHalt, "", reason);
   }
 
+  // Keeps the live index in step with the record's state. Called wherever state can change.
+  void trackLive(OrderRecord& rec) {
+    if (isLive(rec.state)) {
+      live[rec.seq] = &rec;
+    } else {
+      live.erase(rec.seq);
+    }
+  }
+
   OrderRecord& addRecord(OrderRecord record) {
     const std::string id = record.clOrdId;
+    record.seq = ++recordSeq;
     const auto [slot, inserted] = records.emplace(id, std::move(record));
     if (inserted) {
       insertionOrder.push_back(id);
+      trackLive(slot->second);
     } else {
       anomaly(id, "duplicate order id ignored");  // must never happen: ids are minted unique
     }
@@ -144,6 +172,7 @@ struct Oms::Impl {
     log(JournalKind::kStateChange, rec.clOrdId,
         std::string(toString(rec.state)) + " -> " + toString(next) + " (" + why + ")");
     rec.state = next;
+    trackLive(rec);
   }
 
   bool fire(OrderRecord& rec, OmsEvent event, const std::string& why) {
@@ -205,18 +234,12 @@ struct Oms::Impl {
     return before != rec.state;
   }
 
-  std::size_t liveCount() const {
-    std::size_t count = 0;
-    for (const auto& [id, rec] : records) {
-      count += isLive(rec.state) ? 1U : 0U;
-    }
-    return count;
-  }
+  std::size_t liveCount() const { return live.size(); }
 
   std::size_t liveWithVenueId() const {
     std::size_t count = 0;
-    for (const auto& [id, rec] : records) {
-      count += (isLive(rec.state) && rec.venueOrderId != 0) ? 1U : 0U;
+    for (const auto& [liveSeq, rec] : live) {
+      count += rec->venueOrderId != 0 ? 1U : 0U;
     }
     return count;
   }
@@ -271,10 +294,8 @@ struct Oms::Impl {
     const std::int64_t sign = sideSign(intent.side);
     Int128 sameSidePending = 0;
     std::int64_t pendingSells = 0;
-    for (const auto& [id, rec] : records) {
-      if (!isLive(rec.state)) {
-        continue;
-      }
+    for (const auto& [liveSeq, recPtr] : live) {
+      const OrderRecord& rec = *recPtr;
       const std::int64_t remainingQty = std::max<std::int64_t>(0, rec.qty - rec.filledQty);
       const Int128 notional = static_cast<Int128>(remainingQty) * rec.priceMills;
       gross += notional;
@@ -296,16 +317,16 @@ struct Oms::Impl {
   }
 
   bool symbolHasUnresolved(const std::string& symbol) const {
-    return std::any_of(records.begin(), records.end(), [&](const auto& kv) {
-      return kv.second.symbol == symbol && kv.second.state == OmsState::kUnknown;
+    return std::any_of(live.begin(), live.end(), [&](const auto& kv) {
+      return kv.second->symbol == symbol && kv.second->state == OmsState::kUnknown;
     });
   }
 
   // Would this order trade against one of our own resting orders in the same symbol?
   bool wouldSelfTrade(const OrderIntent& intent) const {
-    return std::any_of(records.begin(), records.end(), [&](const auto& kv) {
-      const OrderRecord& rec = kv.second;
-      if (!isLive(rec.state) || rec.symbol != intent.symbol || rec.side == intent.side) {
+    return std::any_of(live.begin(), live.end(), [&](const auto& kv) {
+      const OrderRecord& rec = *kv.second;
+      if (rec.symbol != intent.symbol || rec.side == intent.side) {
         return false;
       }
       return intent.side == Side::kBuy ? intent.priceMills >= rec.priceMills
@@ -457,15 +478,12 @@ struct Oms::Impl {
     std::vector<std::string> targets;
     {
       std::scoped_lock lock(mu);
-      for (const auto& id : insertionOrder) {
-        const OrderRecord& rec = records.at(id);
-        if (!isLive(rec.state)) {
-          continue;
-        }
+      for (const auto& [liveSeq, recPtr] : live) {
+        const OrderRecord& rec = *recPtr;
         if (rec.venueOrderId == 0) {
           ++report.unresolvedWithoutVenueId;
         } else {
-          targets.push_back(id);
+          targets.push_back(rec.clOrdId);
         }
       }
     }
@@ -726,6 +744,11 @@ HaltReport Oms::haltAndCancelAll(const std::string& reason) {
   return im.runHalt(true);
 }
 
+void Oms::requestHalt(const std::string& reason) {
+  std::scoped_lock lock(impl_->mu);
+  impl_->autoTrip(reason);
+}
+
 HaltReport Oms::serviceHalt() {
   if (!impl_->haltRequested.load()) {
     return {};
@@ -836,9 +859,15 @@ ReconcileReport Oms::reconcile() {
       }
     }
     const std::int64_t now = im.clock.nowNs();
-    for (const auto& id : im.insertionOrder) {
-      OrderRecord& rec = im.records.at(id);
-      if (!isLive(rec.state) || seen.contains(id)) {
+    // Snapshot: the loop below may change states (and so the live index) as it goes.
+    std::vector<OrderRecord*> liveNow;
+    liveNow.reserve(im.live.size());
+    for (const auto& [liveSeq, recPtr] : im.live) {
+      liveNow.push_back(recPtr);
+    }
+    for (OrderRecord* recPtr : liveNow) {
+      OrderRecord& rec = *recPtr;
+      if (!isLive(rec.state) || seen.contains(rec.clOrdId)) {
         continue;
       }
       if (rec.sentAtNs > fetchStartNs) {
@@ -976,22 +1005,25 @@ std::size_t Oms::liveOrderCount() const {
 std::vector<std::string> Oms::liveOrderIds(const std::string& symbol) const {
   std::scoped_lock lock(impl_->mu);
   std::vector<std::string> ids;
-  for (const auto& id : impl_->insertionOrder) {
-    const OrderRecord& rec = impl_->records.at(id);
-    if (rec.symbol == symbol && isLive(rec.state)) {
-      ids.push_back(id);
+  for (const auto& [liveSeq, rec] : impl_->live) {
+    if (rec->symbol == symbol) {
+      ids.push_back(rec->clOrdId);
     }
   }
   return ids;
 }
 
+bool Oms::hasLiveOrder(const std::string& symbol) const {
+  std::scoped_lock lock(impl_->mu);
+  return std::any_of(impl_->live.begin(), impl_->live.end(),
+                     [&](const auto& kv) { return kv.second->symbol == symbol; });
+}
+
 std::size_t Oms::unresolvedCount() const {
   std::scoped_lock lock(impl_->mu);
-  std::size_t count = 0;
-  for (const auto& [id, rec] : impl_->records) {
-    count += rec.state == OmsState::kUnknown ? 1U : 0U;
-  }
-  return count;
+  return static_cast<std::size_t>(
+      std::count_if(impl_->live.begin(), impl_->live.end(),
+                    [](const auto& kv) { return kv.second->state == OmsState::kUnknown; }));
 }
 
 std::size_t Oms::anomalyCount() const {
@@ -1001,7 +1033,7 @@ std::size_t Oms::anomalyCount() const {
 
 std::vector<JournalEntry> Oms::journal() const {
   std::scoped_lock lock(impl_->mu);
-  return impl_->journalLog;
+  return {impl_->journalLog.begin(), impl_->journalLog.end()};
 }
 
 }  // namespace futu_trader::oms

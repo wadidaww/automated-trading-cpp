@@ -12,7 +12,7 @@ cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan # Thre
 - Tests are GoogleTest (`tests/unit`, `tests/e2e`). Never use bare `assert` in tests (it vanishes under NDEBUG).
 - Format with `clang-format -i`; lint with `clang-tidy -p build/dev <file>`. CI blocks on both and on `-Werror`.
 - Concurrency changes must pass `ctest --preset tsan --repeat until-fail:30`.
-- vcpkg is optional (`VCPKG_ROOT`); otherwise system packages are used (needs libgtest-dev, libprotobuf-dev, protobuf-compiler, libboost-dev).
+- vcpkg is optional (`VCPKG_ROOT`); otherwise system packages are used (needs libgtest-dev, libprotobuf-dev, protobuf-compiler, libboost-dev, libssl-dev).
 - Asio sockets must never be `close()`d while another thread is inside an operation on them: `shutdown()` from other threads, `close()` only after joining (TSan enforces this).
 
 ## Rules that must not be broken
@@ -23,7 +23,7 @@ cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan # Thre
 5. **No network calls or blocking IO while holding a mutex.**
 6. **OpenD wire layer lives in `src/opend/`** (framing, connection, client), with protos vendored in `third_party/futu_proto` (pinned, see PROTO_VERSION). Command IDs are NOT in the `.proto` files: `include/futu_trader/opend/proto_ids.hpp` pins them to the SDK's table and a test asserts every value. Never hand-type an ID elsewhere. The old `FutuClient` (`api/futu_client.hpp`) is a legacy in-memory stub with WRONG ids (place/cancel/getKl/snapshot); do not use it for anything real. It goes away in P2.
 7. **Determinism:** strategy code reads time only from an injected clock; no `random_device`; no iteration over unordered containers in the decision path.
-8. Do not use `sleep_for` to wait in tests; use `drain()` or drive a clock.
+8. Never use a fixed `sleep_for` as synchronisation in tests. Single-threaded code: use `drain()` or drive a `ManualClock`. Real-thread tests may poll an observable condition against a deadline (`waitFor`), never "sleep and hope".
 9. **REAL money is unforgeable at compile time.** `opend::AccountHeader` has no public way to build a REAL header; only `oms::TradeTarget` can, and a REAL `TradeTarget` needs a `LiveApproval` that only `LiveGate::approveReal` issues. Never add a public constructor or a `TrdEnv` parameter to a request API. Broker events use `WireHeader`, which cannot address a request.
 10. **An ambiguous submit is never a rejection.** Only `kServer`/`kInvalidArg` prove the order does not exist; timeouts, disconnects and unknown OpenD `retType`s leave it `Unknown` until reconciled. An order declared dead by absence stays blocked under its intent key, and its late appearance halts trading.
 11. **Every automatic halt must also cancel** resting orders. Push handlers (`Oms::onOrderUpdate/onFill`, `PushRouter`) only set a flag; the engine thread must call `Oms::serviceHalt()` regularly (submit and reconcile also do). Never call the venue from the OpenD push thread: it delivers the venue's own replies.
@@ -42,6 +42,7 @@ Fill model (see `SimVenue`): order latency, finite displayed size consumed per q
 `detectLookahead` cuts the data right after sampled decisions and requires identical earlier decisions; it finds strategies whose past decisions change without the future, but cannot prove absence of bias. `cutsChecked == 0` counts as a failure.
 
 ## Known gaps (be honest about these)
+- Engine: the engine thread blocks on the broker (`strategy -> OMS -> venue.place()` is synchronous, tens of ms through OpenD), so order handling is not sub-millisecond and stalls quote processing; stale quotes are skipped. A dedicated order-sender thread is not built. Tail latencies are unverified (only measured on WSL2); see `docs/latency.md`, which also lists what is NOT achieved. `Oms::records` is never pruned.
 - Backtester: single-symbol CLI only (the runner itself handles several); resampling is by sample period with empty periods skipped (no trading calendar, so the overnight gap is one observation); no deflated Sharpe/multiple-testing correction; `walkForwardSplits` exists but no runner uses it yet; the Python research/model-export path is not started; historical data download (`scripts/fetch_historical_data.sh`) and the live recorder are not implemented (the event-log format and replay are).
 - Golden files compare `%.6f` floats; they could differ across compilers/libm for metrics (integer results and the journal hash are exact).
 - `LiveGate` is not wired to a `main` yet: nothing reads `FUTU_LIVE_TRADING`/`--live`, loads the promotion log, or runs the engine loop that must call `serviceHalt()`. There is no runnable trading binary yet (P3/P5).

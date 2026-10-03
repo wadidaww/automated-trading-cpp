@@ -9,6 +9,7 @@
 #include "futu_trader/execution/kill_switch.hpp"
 #include "futu_trader/portfolio/fees.hpp"
 #include "futu_trader/portfolio/position_book.hpp"
+#include "futu_trader/strategy/oms_context.hpp"
 
 namespace futu_trader::backtest {
 
@@ -79,75 +80,6 @@ class TradeTracker {
   std::vector<Money> closed_;
 };
 
-// The strategy's window onto the world: everything goes through the OMS.
-class Context final : public strategy::StrategyContext {
- public:
-  Context(oms::Oms& oms, const portfolio::PositionBook& book, const ManualClock& clock,
-          const std::map<std::string, QuoteEvent>& quotes, std::uint64_t seed,
-          std::vector<std::string>& decisions, BacktestResult& result)
-      : oms_(oms),
-        book_(book),
-        clock_(clock),
-        quotes_(quotes),
-        rng_(seed),
-        decisions_(decisions),
-        result_(result) {}
-
-  std::int64_t nowNs() const override { return clock_.nowNs(); }
-  std::int64_t position(const std::string& symbol) const override { return book_.qty(symbol); }
-
-  bool hasLiveOrder(const std::string& symbol) const override {
-    return !liveOrderIds(symbol).empty();
-  }
-  std::vector<std::string> liveOrderIds(const std::string& symbol) const override {
-    return oms_.liveOrderIds(symbol);
-  }
-
-  oms::SubmitResult submit(const std::string& symbol, Side side, std::int64_t qty,
-                           Money priceMills) override {
-    decisions_.push_back(std::to_string(clock_.nowNs()) + " " + symbol +
-                         (side == Side::kBuy ? " B " : " S ") + std::to_string(qty) + " " +
-                         std::to_string(priceMills));
-    oms::QuoteContext quote;
-    const auto found = quotes_.find(symbol);
-    if (found != quotes_.end()) {
-      quote.lastPriceMills = found->second.mid();
-      quote.quoteTimeNs = found->second.tsNs;
-    }
-    quote.nowNs = clock_.nowNs();
-    oms::OrderIntent intent{"S" + std::to_string(++counter_), symbol, side, qty, priceMills};
-    const auto outcome = oms_.submit(intent, quote);
-    ++result_.submits;
-    switch (outcome.status) {
-      case oms::SubmitStatus::kAccepted:
-        ++result_.accepted;
-        break;
-      case oms::SubmitStatus::kRejectedByRisk:
-        ++result_.riskRejects;
-        break;
-      case oms::SubmitStatus::kRejectedByVenue:
-        ++result_.venueRejects;
-        break;
-      default:
-        break;
-    }
-    return outcome;
-  }
-
-  Result<bool> cancel(const std::string& clOrdId) override { return oms_.cancel(clOrdId); }
-  std::uint64_t random() override { return rng_.next(); }
-
- private:
-  oms::Oms& oms_;
-  const portfolio::PositionBook& book_;
-  const ManualClock& clock_;
-  const std::map<std::string, QuoteEvent>& quotes_;
-  Rng rng_;
-  std::vector<std::string>& decisions_;
-  BacktestResult& result_;
-  std::uint64_t counter_{0};
-};
-
 }  // namespace
 
 BacktestConfig defaultBacktestConfig() {
@@ -213,12 +145,31 @@ BacktestResult runBacktest(const BacktestConfig& config, const std::vector<Quote
                    fillNotional += static_cast<Money>(turnover);
                  });
 
-  std::map<std::string, QuoteEvent> quotes;
+  std::map<std::string, QuoteEvent> quotes;  // last quote per symbol (for liquidation value)
   std::map<std::string, Money> marks;
   // The strategy's random stream is separate from any data-generation stream, so seeding both
   // with the same number cannot correlate the trader's coin flips with the price path.
-  Context ctx(oms, book, clock, quotes, config.seed ^ 0xD1B54A32D192ED03ULL, result.decisions,
-              result);
+  strategy::OmsContext ctx(oms, book, clock, config.seed ^ 0xD1B54A32D192ED03ULL);
+  ctx.setSubmitObserver([&](std::int64_t nowNs, const std::string& symbol, Side side,
+                            std::int64_t qty, Money price, const oms::SubmitResult& outcome) {
+    result.decisions.push_back(std::to_string(nowNs) + " " + symbol +
+                               (side == Side::kBuy ? " B " : " S ") + std::to_string(qty) + " " +
+                               std::to_string(price));
+    ++result.submits;
+    switch (outcome.status) {
+      case oms::SubmitStatus::kAccepted:
+        ++result.accepted;
+        break;
+      case oms::SubmitStatus::kRejectedByRisk:
+        ++result.riskRejects;
+        break;
+      case oms::SubmitStatus::kRejectedByVenue:
+        ++result.venueRejects;
+        break;
+      default:
+        break;
+    }
+  });
 
   if (!oms.bootstrap()) {
     result.killReason = "bootstrap failed";
@@ -252,6 +203,7 @@ BacktestResult runBacktest(const BacktestConfig& config, const std::vector<Quote
     venue.onQuote(quote);
     quotes[quote.symbol] = quote;
     marks[quote.symbol] = quote.mid();
+    ctx.observe(quote);
     oms.onMark(quote.symbol, quote.mid());
 
     const std::int64_t day = (ts + kHkOffsetNs) / kDayNs;

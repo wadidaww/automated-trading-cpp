@@ -16,7 +16,7 @@ namespace futu_trader::backtest {
  */
 class Rng {
  public:
-  explicit Rng(std::uint64_t seed) : state_(seed * 0x9E3779B97F4A7C15ULL + 0x1234567ULL) {
+  explicit Rng(std::uint64_t seed) : state_((seed * 0x9E3779B97F4A7C15ULL) + 0x1234567ULL) {
     if (state_ == 0) {
       state_ = 0x9E3779B97F4A7C15ULL;
     }

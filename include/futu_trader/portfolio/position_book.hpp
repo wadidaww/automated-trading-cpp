@@ -51,6 +51,9 @@ class PositionBook {
    */
   Result<bool> seedPosition(const std::string& symbol, std::int64_t qty, Money costPriceMills);
 
+  /** Pre-sizes the duplicate-fill index so it does not rehash mid-session. */
+  void reserveFills(std::size_t n);
+
   /** Marks a fill id as already reflected in the book (e.g. inside a seeded position). */
   void markFillSeen(const std::string& fillId);
 

@@ -1,0 +1,16 @@
+
+benchmark (ns)                                                                       p50       p99     p99.9       max      mean
+clock_overhead (steady_clock back-to-back)                                            37        39       135     92900        37   (subtracted from the rows below)
+opend_frame_decode (44B hdr + 160B body, incl. SHA-1)                               1498      2522     34778    590986      1732
+sha1_160B                                                                           1434      2266     24538    396271      1573
+opend_frame_encode (160B body)                                                      1498      2394     29658    628535      1667
+protobuf_parse BasicQot push (138B)                                                  378       826      1882    593999       418   (default allocator; an arena would cut this)
+spsc_push+pop (same thread, 64B payload)                                              17        22       183      2783        18   (per-op over batches of 128)
+spsc_hop (cross-thread, one way = RTT/2, pinned cpu2<->cpu3)                         123       143       399    170547       108   (busy-polling both sides; WSL2 scheduling noise shows in the tail)
+oms_submit (instant venue, 0 finished orders in history)                           85978    327642   1441754   2137975    109126   (includes risk chain, record creation, journal, one broker update)
+oms_submit (instant venue, 2000 finished orders in history)                       278490    655322   1179610   1715446    289634   (includes risk chain, record creation, journal, one broker update)
+oms_submit (instant venue, 20000 finished orders in history)                     3932122   9961434  13631450  28856658   4200218   (includes risk chain, record creation, journal, one broker update)
+pretrade_risk_check (accept path)                                                     35        79       383      2135        37   (per-op over batches of 64)
+strategy_meanreversion_onQuote (window 60, no orders)                                 98       154       266    115750       102
+histogram_record                                                                       9        12       103      1137         9   (relaxed atomics, 4 per call; per-op over batches of 256)
+backtest_throughput (full OMS + simulated broker + reconciles)                     26266         0         0         0     26266   (38071 events/s, 923 fills)

@@ -43,7 +43,14 @@ class MeanReversion final : public IStrategy {
  private:
   bool zBelow(Money mid, int kx10) const;  // z < -k, exact
   Params params_;
-  std::deque<Money> mids_;
+  // Fixed circular buffer: a std::deque allocates a block every ~64 pushes as it slides.
+  std::vector<Money> mids_;
+  std::size_t head_{0};   // index of the oldest sample once full
+  std::size_t count_{0};  // samples currently in the window
+  // Running sums of the window, updated in O(1) per quote (exact integer arithmetic, so there is
+  // no drift to accumulate however long it runs).
+  __extension__ __int128 sum_{0};
+  __extension__ __int128 sumSq_{0};
 };
 
 /**

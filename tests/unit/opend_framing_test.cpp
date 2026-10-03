@@ -55,6 +55,21 @@ TEST(Sha1, PaddingBoundaries) {
   EXPECT_EQ(sha1Hex(std::string(1000, 'a')), "291e9a6c66994949b57ba5e650361e98fc36b1ba");
 }
 
+TEST(Sha1, AcceleratedAndPortableImplementationsAgreeOnEveryLengthUpTo600) {
+  // Differential test: the production (OpenSSL) SHA-1 against the independent portable one,
+  // across all padding boundaries and a range of contents.
+  std::mt19937 rng(77);
+  for (std::size_t len = 0; len <= 600; ++len) {
+    std::vector<std::uint8_t> data(len);
+    for (auto& b : data) {
+      b = static_cast<std::uint8_t>(rng());
+    }
+    const auto fast = sha1(data.data(), data.size());
+    const auto slow = sha1Portable(data.data(), data.size());
+    ASSERT_EQ(fast, slow) << "length " << len;
+  }
+}
+
 // --- Frame layout (reference bytes produced by the official SDK's struct format) ---
 
 TEST(Framing, EncodeMatchesSdkLayoutByteForByte) {

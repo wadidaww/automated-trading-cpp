@@ -105,6 +105,11 @@ Result<bool> PositionBook::seedPosition(const std::string& symbol, std::int64_t 
   return true;
 }
 
+void PositionBook::reserveFills(std::size_t n) {
+  std::scoped_lock lock(mu_);
+  seenFills_.reserve(n);
+}
+
 void PositionBook::markFillSeen(const std::string& fillId) {
   std::scoped_lock lock(mu_);
   seenFills_.insert(fillId);

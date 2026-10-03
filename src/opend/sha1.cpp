@@ -1,5 +1,11 @@
 #include "futu_trader/opend/sha1.hpp"
 
+// The low-level SHA1_* functions are deprecated in OpenSSL 3 but are the only interface without a
+// per-call provider lookup (the one-shot SHA1()/EVP paths cost ~400 ns each, more than hashing a
+// whole frame). They are stable, and the differential test checks them against the portable code.
+#define OPENSSL_SUPPRESS_DEPRECATED 1
+#include <openssl/sha.h>
+
 #include <cstring>
 #include <vector>
 
@@ -59,7 +65,7 @@ void processBlock(std::array<std::uint32_t, 5>& state, const std::uint8_t* block
 
 }  // namespace
 
-Sha1Digest sha1(const std::uint8_t* data, std::size_t size) {
+Sha1Digest sha1Portable(const std::uint8_t* data, std::size_t size) {
   std::array<std::uint32_t, 5> state{0x67452301U, 0xEFCDAB89U, 0x98BADCFEU, 0x10325476U,
                                      0xC3D2E1F0U};
   std::size_t offset = 0;
@@ -91,6 +97,15 @@ Sha1Digest sha1(const std::uint8_t* data, std::size_t size) {
     out[(i * 4) + 2] = static_cast<std::uint8_t>(state[i] >> 8U);
     out[(i * 4) + 3] = static_cast<std::uint8_t>(state[i]);
   }
+  return out;
+}
+
+Sha1Digest sha1(const std::uint8_t* data, std::size_t size) {
+  Sha1Digest out{};
+  SHA_CTX ctx;
+  SHA1_Init(&ctx);
+  SHA1_Update(&ctx, data, size);
+  SHA1_Final(out.data(), &ctx);
   return out;
 }
 

@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev
       - name: Backtest regression gate (deterministic, reconciled, golden)
         run: ./scripts/run_backtest.sh
       - name: Upload reports

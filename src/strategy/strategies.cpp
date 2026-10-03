@@ -18,15 +18,9 @@ bool MeanReversion::zBelow(Money mid, int kx10) const {
   // With n samples, sum S and sum of squares Q: mean = S/n and n^2 * variance = n*Q - S^2 = V.
   // z = (mid - mean) / sd = dev / sqrt(V) where dev = n*mid - S. So z < -k  <=>  dev < 0 and
   // dev^2 * 100 > kx10^2 * V. Everything is integer, so there is no rounding to disagree on.
-  const auto n = static_cast<Int128>(mids_.size());
-  Int128 sum = 0;
-  Int128 sumSq = 0;
-  for (const Money m : mids_) {
-    sum += m;
-    sumSq += static_cast<Int128>(m) * m;
-  }
-  const Int128 variance = (n * sumSq) - (sum * sum);
-  const Int128 dev = (n * mid) - sum;
+  const auto n = static_cast<Int128>(count_);
+  const Int128 variance = (n * sumSq_) - (sum_ * sum_);
+  const Int128 dev = (n * mid) - sum_;
   if (variance <= 0 || dev >= 0) {
     return false;
   }
@@ -38,11 +32,28 @@ void MeanReversion::onQuote(const QuoteEvent& quote, StrategyContext& ctx) {
     return;
   }
   const Money mid = quote.mid();
-  mids_.push_back(mid);
-  if (mids_.size() > params_.window) {
-    mids_.pop_front();
+  if (mids_.size() != params_.window) {
+    mids_.assign(params_.window, 0);  // first call only
   }
-  if (mids_.size() < params_.window || ctx.hasLiveOrder(params_.symbol)) {
+  if (count_ == params_.window) {
+    const Money oldest = mids_[head_];
+    sum_ -= oldest;
+    sumSq_ -= static_cast<Int128>(oldest) * oldest;
+    mids_[head_] = mid;
+    if (++head_ == params_.window) {
+      head_ = 0;  // compare-and-wrap: an integer modulo here costs more than the rest of the call
+    }
+  } else {
+    std::size_t slot = head_ + count_;
+    if (slot >= params_.window) {
+      slot -= params_.window;
+    }
+    mids_[slot] = mid;
+    ++count_;
+  }
+  sum_ += mid;
+  sumSq_ += static_cast<Int128>(mid) * mid;
+  if (count_ < params_.window || ctx.hasLiveOrder(params_.symbol)) {
     return;
   }
   const std::int64_t held = ctx.position(params_.symbol);

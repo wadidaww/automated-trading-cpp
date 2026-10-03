@@ -47,6 +47,16 @@
         "FUTU_TRADER_WERROR": "ON",
         "FUTU_TRADER_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "bench",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/bench",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "FUTU_TRADER_BUILD_TESTS": "OFF",
+        "FUTU_TRADER_BUILD_BENCH": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -65,6 +75,10 @@
     {
       "name": "tsan",
       "configurePreset": "tsan"
+    },
+    {
+      "name": "bench",
+      "configurePreset": "bench"
     }
   ],
   "testPresets": [

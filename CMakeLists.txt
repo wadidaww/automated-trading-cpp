@@ -16,10 +16,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(FUTU_TRADER_BUILD_TESTS "Build tests" ON)
 option(FUTU_TRADER_WERROR "Treat warnings as errors" OFF)
+option(FUTU_TRADER_BUILD_BENCH "Build the futu_bench micro-benchmarks" OFF)
 
 find_package(Threads REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(Boost REQUIRED)  # header-only Boost.Asio
+find_package(OpenSSL REQUIRED)  # hardware-accelerated SHA-1 for the OpenD frame header
 
 # Official Futu OpenD protobuf definitions, vendored and version-pinned (see PROTO_VERSION).
 file(GLOB FUTU_PROTO_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/futu_proto/*.proto)
@@ -37,6 +39,11 @@ add_library(futu_trader
   src/portfolio/fees.cpp
   src/sizing/sizing.cpp
   src/data/event_log.cpp
+  src/infra/histogram.cpp
+  src/infra/thread_tuning.cpp
+  src/infra/metrics.cpp
+  src/infra/wal.cpp
+  src/infra/metrics_server.cpp
   src/data/csv.cpp
   src/data/validate.cpp
   src/backtest/synthetic.cpp
@@ -45,6 +52,8 @@ add_library(futu_trader
   src/backtest/sim_venue.cpp
   src/backtest/runner.cpp
   src/strategy/strategies.cpp
+  src/strategy/oms_context.cpp
+  src/engine/engine.cpp
   src/portfolio/position_book.cpp
   src/oms/live_gate.cpp
   src/oms/oms.cpp
@@ -74,6 +83,7 @@ add_library(futu_trader
 
 target_include_directories(futu_trader PUBLIC include)
 target_link_libraries(futu_trader PUBLIC futu_proto Threads::Threads Boost::headers)
+target_link_libraries(futu_trader PRIVATE OpenSSL::Crypto)
 target_compile_options(futu_trader PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 if(FUTU_TRADER_WERROR)
   target_compile_options(futu_trader PRIVATE -Werror)
@@ -85,6 +95,11 @@ set_target_properties(futu_trader_app PROPERTIES OUTPUT_NAME futu_trader)
 
 add_executable(futu_backtest src/backtest_main.cpp)
 target_link_libraries(futu_backtest PRIVATE futu_trader)
+
+if(FUTU_TRADER_BUILD_BENCH)
+  add_executable(futu_bench bench/futu_bench.cpp)
+  target_link_libraries(futu_bench PRIVATE futu_trader)
+endif()
 
 add_executable(futu_model_train src/train_main.cpp)
 target_link_libraries(futu_model_train PRIVATE futu_trader)
@@ -104,6 +119,10 @@ if(FUTU_TRADER_BUILD_TESTS)
       tests/unit/hk_rules_test.cpp
       tests/unit/order_state_test.cpp
       tests/unit/data_test.cpp
+      tests/unit/ring_histogram_test.cpp
+      tests/unit/engine_test.cpp
+      tests/unit/metrics_test.cpp
+      tests/unit/wal_test.cpp
       tests/unit/backtest_metrics_test.cpp
       tests/unit/sim_venue_test.cpp
       tests/unit/backtest_runner_test.cpp
@@ -148,6 +167,14 @@ if(FUTU_TRADER_BUILD_TESTS)
              COMMAND futu_backtest --synthetic --seed 7 --count 20000 --strategy random
                      --check-determinism
                      --golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/backtest_random_seed7.json)
+
+    # Allocation-counting tests replace global operator new, so they cannot be combined with the
+    # sanitizers (which hook the allocator themselves).
+    if(NOT CMAKE_CXX_FLAGS MATCHES "sanitize")
+      add_executable(futu_alloc_tests tests/alloc/alloc_test.cpp)
+      target_link_libraries(futu_alloc_tests PRIVATE futu_trader GTest::gtest_main)
+      gtest_discover_tests(futu_alloc_tests)
+    endif()
 
     add_executable(futu_e2e_tests tests/e2e/e2e_smoke_test.cpp)
     target_link_libraries(futu_e2e_tests PRIVATE GTest::gtest_main)

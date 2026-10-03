@@ -33,32 +33,12 @@ struct Tick {
   TimePoint timestamp;
 };
 
-enum class OrderType : uint8_t { kMarket, kLimit, kStopLimit, kTrailingStop };
-enum class OrderState : uint8_t {
-  kPending,
-  kSubmitted,
-  kPartialFill,
-  kFilled,
-  kCancelled,
-  kRejected
-};
-
+/** What the pre-trade checks look at: one order's economics. Direction is carried by `side`. */
 struct Order {
-  std::string orderId;
   std::string symbol;
   Side side{Side::kBuy};
-  std::int64_t quantity{0};  // always positive; direction is carried by `side`
+  std::int64_t quantity{0};  // always positive
   Money limitPriceMinor{0};
-  OrderType type{OrderType::kLimit};
-  OrderState state{OrderState::kPending};
-  std::string idempotencyKey;
-};
-
-struct TradeSignal {
-  std::string symbol;
-  Signal signal;
-  std::int64_t suggestedQuantity{0};
-  TimePoint timestamp;
 };
 
 }  // namespace futu_trader

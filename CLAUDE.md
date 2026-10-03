@@ -21,7 +21,7 @@ cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan # Thre
 3. **Fail closed.** An unset risk limit means reject, not unlimited.
 4. **Check the venue result.** Never record an order as submitted unless the venue accepted it.
 5. **No network calls or blocking IO while holding a mutex.**
-6. **OpenD wire layer lives in `src/opend/`** (framing, connection, client), with protos vendored in `third_party/futu_proto` (pinned, see PROTO_VERSION). Command IDs are NOT in the `.proto` files: `include/futu_trader/opend/proto_ids.hpp` pins them to the SDK's table and a test asserts every value. Never hand-type an ID elsewhere. The old `FutuClient` (`api/futu_client.hpp`) is a legacy in-memory stub with WRONG ids (place/cancel/getKl/snapshot); do not use it for anything real. It goes away in P2.
+6. **OpenD wire layer lives in `src/opend/`** (framing, connection, client), with protos vendored in `third_party/futu_proto` (pinned, see PROTO_VERSION). Command IDs are NOT in the `.proto` files: `include/futu_trader/opend/proto_ids.hpp` pins them to the SDK's table and a test asserts every value. Never hand-type an ID elsewhere. The old in-memory `FutuClient` (wrong ids) and its pipeline were removed.
 7. **Determinism:** strategy code reads time only from an injected clock; no `random_device`; no iteration over unordered containers in the decision path.
 8. Never use a fixed `sleep_for` as synchronisation in tests. Single-threaded code: use `drain()` or drive a `ManualClock`. Real-thread tests may poll an observable condition against a deadline (`waitFor`), never "sleep and hope".
 9. **REAL money is unforgeable at compile time.** `opend::AccountHeader` has no public way to build a REAL header; only `oms::TradeTarget` can, and a REAL `TradeTarget` needs a `LiveApproval` that only `LiveGate::approveReal` issues. Never add a public constructor or a `TrdEnv` parameter to a request API. Broker events use `WireHeader`, which cannot address a request.
@@ -56,9 +56,8 @@ Fill model (see `SimVenue`): order latency, finite displayed size consumed per q
 - If an order-update push arrives before its fill push, exposure is briefly understated until the fill is applied (reconciliation catches lasting drift).
 - CI/Docker supply chain: actions are pinned by SHA and base images by digest, the release job builds a SHA, produces an SBOM and signs with cosign, but none of that ran locally (only YAML-parsed), no vulnerability scanner is wired in, and CODEOWNERS/branch protection/required reviewers are repository settings that files cannot enforce.
 
-## Known scaffold gaps (not yet real)
-`FutuClient` (legacy) is an in-memory stub and the old `TradingPipeline`/`Backtester` (ISignalModel-based) are legacy too: new work uses `opend::OpenDClient`, `oms::Oms` and `backtest::runBacktest`; `PositionTracker`/`ModelRegistry`/`DataStore` are unwired;
-The old `config/config.{dev,staging,prod}.yaml` belong to the legacy model-training code; the trader reads `config/paper.yaml` / `config/live.example.yaml`.
+## Structure (see docs/architecture.md)
+`oms::Oms` is a facade over `src/oms/oms_impl.hpp`, split into `oms.cpp` (lifecycle/events/queries), `oms_submit.cpp` (the submit pipeline) and `oms_reconcile.cpp`. The process is `app::Trader` (staged startup/trade/shutdown) over `app::TradingStack` (composition root, closes the OpenD link before teardown); `app/config_mapping` is the only AppConfig-to-component translation; `strategy::makeStrategy` builds strategies for live and backtest. `model/` and `futu_model_train` are the offline training path; the old `FutuClient`/`TradingPipeline`/`OrderManager`/`Backtester` scaffold is gone. `config/config.{dev,staging,prod}.yaml` belong to the training tool; the trader reads `config/paper.yaml` / `config/live.example.yaml`.
 
 ## Agents & skills (tracked in `tooling/`, symlinked into `.claude/` locally)
 Agents: quantitative-developer, execution-trader, risk-manager (veto on order-flow/live-gating changes),

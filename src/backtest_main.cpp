@@ -29,6 +29,7 @@
 #include "futu_trader/data/event_log.hpp"
 #include "futu_trader/data/validate.hpp"
 #include "futu_trader/strategy/strategies.hpp"
+#include "futu_trader/strategy/strategy_factory.hpp"
 
 using namespace futu_trader;
 
@@ -154,33 +155,16 @@ bool readFile(const std::string& path, std::string& out) {
   return true;
 }
 
+// The CLI's fixed parameters per strategy (the goldens depend on them: change them deliberately).
 std::unique_ptr<strategy::IStrategy> makeStrategy(const std::string& name,
                                                   const std::string& symbol,
                                                   const std::vector<QuoteEvent>* data) {
-  if (name == "meanrev") {
-    strategy::MeanReversion::Params p;
-    p.symbol = symbol;
-    p.window = 60;
-    p.entryZx10 = 15;
-    p.exitZx10 = 0;
-    p.qty = 100;
-    return std::make_unique<strategy::MeanReversion>(p);
-  }
-  if (name == "buyhold") {
-    return std::make_unique<strategy::BuyAndHold>(symbol, 100);
-  }
-  if (name == "random") {
-    return std::make_unique<strategy::RandomTrader>(symbol, 100, 25);
-  }
-  if (name == "maker") {
-    strategy::PassiveMaker::Params p;
-    p.symbol = symbol;
-    return std::make_unique<strategy::PassiveMaker>(p);
-  }
-  if (name == "peeker") {  // the cheating canary: --check-lookahead must reject it
-    return std::make_unique<strategy::FuturePeeker>(symbol, 100, data);
-  }
-  return nullptr;
+  strategy::StrategySpec spec;
+  spec.name = name;
+  spec.symbol = symbol;
+  spec.qty = name == "maker" ? 300 : 100;
+  spec.entryZx10 = 15;
+  return strategy::makeStrategy(spec, data);
 }
 
 int usage(const std::string& why) {

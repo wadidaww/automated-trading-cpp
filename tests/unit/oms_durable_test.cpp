@@ -8,6 +8,7 @@
 #include "futu_trader/oms/journal_codec.hpp"
 #include "futu_trader/oms/oms.hpp"
 #include "futu_trader/strategy/strategies.hpp"
+#include "test_support.hpp"
 
 using namespace futu_trader;
 using namespace futu_trader::oms;
@@ -106,13 +107,9 @@ std::vector<DurableSubmit> loadIntents(const std::string& path) {
   return out;
 }
 
-struct TempWal {
-  explicit TempWal(const std::string& name)
-      : path((std::filesystem::temp_directory_path() / name).string()) {
-    std::filesystem::remove(path);
-  }
-  ~TempWal() { std::filesystem::remove(path); }
-  std::string path;
+struct TempWal : testing_support::ScopedPath {
+  explicit TempWal(const std::string& name) : ScopedPath(name), path(str()) {}
+  std::string path;  // the same location as a string
 };
 
 }  // namespace

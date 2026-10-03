@@ -15,21 +15,11 @@
 #include "test_support.hpp"
 
 using namespace futu_trader;
+using testing_support::waitFor;
 using namespace futu_trader::oms;
 using namespace std::chrono_literals;
 
 namespace {
-
-bool waitFor(const std::function<bool()>& cond, std::chrono::milliseconds limit = 5000ms) {
-  const auto deadline = std::chrono::steady_clock::now() + limit;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (cond()) {
-      return true;
-    }
-    std::this_thread::sleep_for(5ms);
-  }
-  return cond();
-}
 
 // The whole stack: mock OpenD <-> OpenDClient <-> OpenDVenue <-> Oms, with pushes wired in.
 struct Stack {

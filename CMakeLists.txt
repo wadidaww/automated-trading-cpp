@@ -47,6 +47,10 @@ add_library(futu_trader
   src/infra/secrets.cpp
   src/app/metrics_bindings.cpp
   src/app/config.cpp
+  src/app/config_mapping.cpp
+  src/app/trusted_fs.cpp
+  src/app/live_startup.cpp
+  src/app/trading_stack.cpp
   src/app/application.cpp
   src/app/probe.cpp
   src/app/promotion.cpp
@@ -60,10 +64,13 @@ add_library(futu_trader
   src/backtest/runner.cpp
   src/strategy/strategies.cpp
   src/strategy/oms_context.cpp
+  src/strategy/strategy_factory.cpp
   src/engine/engine.cpp
   src/portfolio/position_book.cpp
   src/oms/live_gate.cpp
   src/oms/oms.cpp
+  src/oms/oms_submit.cpp
+  src/oms/oms_reconcile.cpp
   src/oms/journal_codec.cpp
   src/oms/push_router.cpp
   src/execution/rate_limiter.cpp
@@ -74,19 +81,11 @@ add_library(futu_trader
   src/opend/client.cpp
   src/opend/trade_decode.cpp
   src/opend/quote_decode.cpp
-  src/api/futu_client.cpp
   src/data/data_normalizer.cpp
-  src/data/market_data.cpp
   src/model/mean_reversion_model.cpp
   src/model/gradient_boosting_model.cpp
   src/model/model_trainer.cpp
-  src/model/model_registry.cpp
   src/risk/risk_engine.cpp
-  src/execution/order_manager.cpp
-  src/execution/position_tracker.cpp
-  src/pipeline/trading_pipeline.cpp
-  src/evaluation/backtester.cpp
-  src/evaluation/report_generator.cpp
   src/utils/config.cpp
 )
 
@@ -153,10 +152,6 @@ if(FUTU_TRADER_BUILD_TESTS)
       tests/unit/data_normalizer_test.cpp
       tests/unit/model_test.cpp
       tests/unit/risk_test.cpp
-      tests/unit/order_manager_test.cpp
-      tests/unit/futu_client_test.cpp
-      tests/unit/backtester_test.cpp
-      tests/unit/pipeline_test.cpp
     )
     target_link_libraries(futu_unit_tests PRIVATE futu_trader futu_mock_opend GTest::gtest_main)
     target_compile_definitions(futu_unit_tests PRIVATE FUTU_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config"

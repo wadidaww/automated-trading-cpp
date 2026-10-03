@@ -13,29 +13,20 @@
 #include <map>
 #include <thread>
 
+#include "test_support.hpp"
+
 using namespace futu_trader;
 using namespace futu_trader::infra;
 
 namespace {
 
-struct TempFile {
-  explicit TempFile(const std::string& name)
-      : path((std::filesystem::temp_directory_path() / name).string()) {
-    std::filesystem::remove(path);
-  }
-  ~TempFile() { std::filesystem::remove(path); }
-  std::string path;
+struct TempFile : testing_support::ScopedPath {
+  explicit TempFile(const std::string& name) : ScopedPath(name), path(str()) {}
+  std::string path;  // the same location as a string
 };
 
-std::string slurp(const std::string& path) {
-  std::ifstream in(path, std::ios::binary);
-  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-}
-
-void spit(const std::string& path, const std::string& bytes) {
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-}
+using testing_support::slurp;
+using testing_support::spit;
 
 }  // namespace
 

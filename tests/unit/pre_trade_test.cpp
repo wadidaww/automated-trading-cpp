@@ -28,7 +28,6 @@ struct Fixture {
   }
   static Order order(Side side = Side::kBuy, std::int64_t qty = 100, Money price = 350'000) {
     Order o;
-    o.orderId = "o";
     o.symbol = "00700";
     o.side = side;
     o.quantity = qty;

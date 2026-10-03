@@ -11,22 +11,14 @@
 #include <thread>
 #include <type_traits>
 
+#include "test_support.hpp"
+
 using namespace futu_trader;
+using testing_support::waitFor;
 using namespace futu_trader::engine;
 using namespace std::chrono_literals;
 
 namespace {
-
-bool waitFor(const std::function<bool()>& cond, std::chrono::milliseconds limit = 5000ms) {
-  const auto deadline = std::chrono::steady_clock::now() + limit;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (cond()) {
-      return true;
-    }
-    std::this_thread::sleep_for(2ms);
-  }
-  return cond();
-}
 
 // Thread-safe stub broker (the reconciler thread and the engine thread both talk to it).
 class StubVenue final : public oms::IVenue {

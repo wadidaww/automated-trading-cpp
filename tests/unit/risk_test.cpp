@@ -23,7 +23,6 @@ RiskConfig limits() {
 
 Order makeOrder(Side side, std::int64_t qty, Money price) {
   Order o;
-  o.orderId = "o";
   o.symbol = "700.HK";
   o.side = side;
   o.quantity = qty;

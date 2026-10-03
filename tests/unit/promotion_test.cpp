@@ -9,31 +9,17 @@
 #include <sstream>
 
 #include "futu_trader/oms/live_gate.hpp"
+#include "test_support.hpp"
 
 using namespace futu_trader;
 using namespace futu_trader::app;
 
 namespace {
 
-struct TempLog {
-  TempLog()
-      : path((std::filesystem::temp_directory_path() /
-              ("futu_promo_" + std::to_string(::getpid()) + "_" + std::to_string(++n)))
-                 .string()) {
-    std::filesystem::remove(path);
-  }
-  ~TempLog() {
-    std::filesystem::remove(path);
-    std::filesystem::remove(path + ".tmp");
-  }
-  std::string read() const {
-    std::ifstream in(path);
-    std::ostringstream text;
-    text << in.rdbuf();
-    return text.str();
-  }
-  void write(const std::string& text) const { std::ofstream(path) << text; }
-  static inline int n = 0;
+struct TempLog : testing_support::ScopedPath {
+  TempLog() : ScopedPath("futu_promo"), path(str()) {}
+  std::string read() const { return testing_support::slurp(path); }
+  void write(const std::string& text) const { testing_support::spit(path, text); }
   std::string path;
 };
 

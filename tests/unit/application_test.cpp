@@ -18,22 +18,13 @@
 #include "futu_trader/execution/kill_switch.hpp"
 #include "futu_trader/infra/wal.hpp"
 #include "futu_trader/oms/journal_codec.hpp"
+#include "test_support.hpp"
 
 using namespace futu_trader;
+using testing_support::waitFor;
 using namespace futu_trader::app;
 
 namespace {
-
-bool waitFor(const std::function<bool()>& condition, int timeoutMs = 5000) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (condition()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  return condition();
-}
 
 std::string httpGet(std::uint16_t port, const std::string& path) {
   const int fd = ::socket(AF_INET, SOCK_STREAM, 0);

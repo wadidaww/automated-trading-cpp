@@ -10,25 +10,16 @@
 #include "futu_trader/opend/client.hpp"
 #include "futu_trader/opend/proto_ids.hpp"
 #include "mock_opend.hpp"
+#include "test_support.hpp"
 
 using namespace futu_trader;
+using testing_support::waitFor;
 using namespace futu_trader::opend;
 using namespace std::chrono_literals;
 
 namespace {
 
 // Polls until `cond` holds or the deadline passes; avoids fixed sleeps in tests.
-bool waitFor(const std::function<bool()>& cond, std::chrono::milliseconds limit = 5000ms) {
-  const auto deadline = std::chrono::steady_clock::now() + limit;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (cond()) {
-      return true;
-    }
-    std::this_thread::sleep_for(5ms);
-  }
-  return cond();
-}
-
 ClientConfig configFor(std::uint16_t port) {
   ClientConfig cfg;
   cfg.connection.port = port;

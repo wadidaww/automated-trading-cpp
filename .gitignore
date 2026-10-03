@@ -8,3 +8,6 @@
 !/data/models/.gitkeep
 /logs/
 *.log
+
+.opencode
+.claude

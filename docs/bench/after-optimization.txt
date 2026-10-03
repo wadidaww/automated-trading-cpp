@@ -1,0 +1,20 @@
+
+benchmark (ns)                                                                       p50       p99     p99.9       max      mean
+clock_overhead (steady_clock back-to-back)                                            37        47        75    371813        38   (subtracted from the rows below)
+opend_frame_decode (44B hdr + 160B body, incl. SHA-1)                                218       458      1114    299944       286
+sha1_160B                                                                            146       202       474    336924       158
+opend_frame_encode (160B body)                                                       282       346       730    103028       262
+protobuf_parse BasicQot push (138B)                                                  730       922      3162     95689       635   (default allocator; an arena would cut this)
+spsc_push+pop (same thread, 64B payload)                                              15        17       215      1879        16   (p50/p99 are percentiles OF BATCH MEANS (per-op over batches of 128): tails are hidden)
+spsc_hop (cross-thread, one way = RTT/2, 64B tick)                                   127       167       383     73307       120   (cpu2 <-> cpu4 (different physical cores); busy-polling; tail = host scheduling noise)
+oms_submit (instant venue; history starts at 0 orders and grows by 1 per op)        2266     13786     73690    174448      3493   (includes risk chain, record creation, journal, one broker update)
+oms_submit (instant venue; history starts at 2000 orders and grows by 1 per op)      2010     11738     38874     91495      2895   (includes risk chain, record creation, journal, one broker update)
+oms_submit (instant venue; history starts at 20000 orders and grows by 1 per op)      2650     10714     27610     34039      3241   (includes risk chain, record creation, journal, one broker update)
+pretrade_risk_check (accept path)                                                     33        75       367      1515        36   (p50/p99 are percentiles OF BATCH MEANS (per-op over batches of 64): tails are hidden)
+strategy_meanreversion_onQuote (window 60, no orders)                                  8        46       202     33020        15
+engine_queue_wait (quote->decision, 200k quotes/s)                                   218    786394   2031578   2484777     24957   (104000 handled, 0 dropped, ring high-water 3478)
+engine_handle (quote->decision, 200k quotes/s)                                       210       794      2138    454292       260   (104000 handled, 0 dropped, ring high-water 3478)
+engine_queue_wait (quote->ORDER->fill through risk+OMS, 20k quotes/s)                218     63450    409562    792742      3043   (24000 handled, 0 dropped, ring high-water 330)
+engine_handle (quote->ORDER->fill through risk+OMS, 20k quotes/s)                   7130     26586     73690    794634      8389   (24000 handled, 0 dropped, ring high-water 330)
+histogram_record                                                                       8        17       115       325         9   (relaxed atomics, 4 per call; p50/p99 are percentiles OF BATCH MEANS (per-op over batches of 256): tails are hidden)
+backtest_throughput (full OMS + simulated broker + reconciles)                      3947         0         0         0      3947   (253371 events/s, 923 fills)

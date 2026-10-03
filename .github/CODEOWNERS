@@ -1,0 +1,19 @@
+# Changes to anything that can lose money need a second pair of eyes (enforce with branch
+# protection: "Require review from Code Owners"). Replace @your-org/risk with the real team.
+/include/futu_trader/oms/        @your-org/risk
+/src/oms/                        @your-org/risk
+/include/futu_trader/risk/       @your-org/risk
+/src/risk/                       @your-org/risk
+/include/futu_trader/execution/  @your-org/risk
+/src/execution/                  @your-org/risk
+/src/app/                        @your-org/risk
+/config/                         @your-org/risk
+/ops/                            @your-org/risk
+/.github/workflows/              @your-org/risk
+/Dockerfile                      @your-org/risk
+/CLAUDE.md                       @your-org/risk
+/src/infra/                       @your-org/risk
+/include/futu_trader/infra/       @your-org/risk
+/src/opend/                        @your-org/risk
+/include/futu_trader/opend/        @your-org/risk
+/docker-compose.yml                @your-org/risk

@@ -1,33 +1,69 @@
 name: deploy-prod
 
+# Builds, scans-by-SBOM and signs the release image. It does NOT start anything on a trading host:
+# promoting an image to run against REAL money is a human decision (docs/runbook.md#going-live) and
+# the live gate in the process refuses to trade without its own promotion record anyway.
+#
+# Required repository setup (not enforceable from here):
+#   - environment "production" with required reviewers (a second person approves every run)
+#   - branch protection on main with Code Owners review (.github/CODEOWNERS)
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit SHA to build (a branch name is refused: it must be immutable)"
+        required: true
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
-  deploy:
+  release:
     runs-on: ubuntu-latest
     environment: production
     permissions:
       contents: read
       packages: write
+      id-token: write       # keyless cosign signing
     steps:
-      - uses: actions/checkout@v4
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - name: Refuse anything that is not a full commit SHA
+        env:
+          REF: ${{ inputs.ref }}   # via env, never interpolated into the script text
+        run: |
+          [[ "$REF" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a 40-hex commit SHA"; exit 1; }
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Refuse a commit that is not on main (it must have been reviewed)
+        env:
+          REF: ${{ inputs.ref }}
+        run: git merge-base --is-ancestor "$REF" origin/main || { echo "$REF is not an ancestor of origin/main"; exit 1; }
+      - name: Run the full test suite before building the image
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev libyaml-cpp-dev
+          cmake --preset ci && cmake --build --preset ci && ctest --preset ci
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push image
-        uses: docker/build-push-action@v6
+      - name: Build and push (tagged by commit, never :latest)
+        id: build
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ github.repository }}:latest
-      - name: Health check
-        run: docker run --rm $REGISTRY/${{ github.repository }}:latest --health-check
-      - name: Deploy placeholder
-        run: echo "Deploy to target via SSH or Kubernetes apply in secured environment."
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}:${{ inputs.ref }}
+          provenance: true
+      - name: Probe the built image
+        run: docker run --rm ${{ env.REGISTRY }}/${{ github.repository }}@${{ steps.build.outputs.digest }} --health-check
+      - name: SBOM
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          artifact-name: sbom.spdx.json
+      - uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+      - name: Sign the image digest (keyless)
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ github.repository }}@${{ steps.build.outputs.digest }}

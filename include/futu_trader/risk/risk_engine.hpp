@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 
@@ -12,8 +13,34 @@ struct RiskConfig {
   Money maxPortfolioNotionalMinor{0};
   Money maxDailyLossMinor{0};
   std::size_t maxOpenOrders{0};
-  double concentrationLimit{1.0};
+  double concentrationLimit{0.0};  // fraction of the portfolio cap; 0 = unset = reject
 };
+
+/** Why a pre-trade check rejected an order. kOk means the order may be placed. */
+enum class RiskReject : uint8_t {
+  kOk,
+  kInvalidOrder,
+  kMaxOpenOrders,
+  kDailyLoss,
+  kPositionLimit,
+  kPortfolioLimit,
+  kConcentration,
+  kOverflow,
+  // Added by oms::PreTradeRisk (the fuller chain layered on top of RiskEngine).
+  kKillSwitch,
+  kUnknownInstrument,
+  kLotSize,
+  kTickSize,
+  kPriceBand,
+  kStaleQuote,
+  kMaxOrderNotional,
+  kShortSale,
+  kRateLimit,
+  kUnresolvedOrder,
+  kSelfTrade,
+};
+
+const char* toString(RiskReject reason);
 
 class KellyCriterion {
  public:
@@ -30,11 +57,26 @@ class DrawdownMonitor {
   double maxDrawdown_{0.0};
 };
 
+/**
+ * Stateless pre-trade risk check. Every limit defaults to zero, so a default-constructed
+ * RiskConfig rejects everything that adds exposure (fail closed). An unset limit never means
+ * "unlimited".
+ *
+ * `positions` holds signed per-symbol notional (long > 0, short < 0). `portfolioNotional` is the
+ * current gross notional. Orders that strictly reduce exposure are checked only for validity and
+ * overflow: after a breach (daily loss, order-count) the system must still be able to flatten.
+ */
 class RiskEngine {
  public:
   explicit RiskEngine(RiskConfig config);
+
+  RiskReject check(const Order& order, const std::unordered_map<std::string, Money>& positions,
+                   Money portfolioNotional, Money dailyPnl, std::size_t openOrders) const;
+
   bool canPlace(const Order& order, const std::unordered_map<std::string, Money>& positions,
-                Money portfolioNotional, Money dailyPnl, std::size_t openOrders) const;
+                Money portfolioNotional, Money dailyPnl, std::size_t openOrders) const {
+    return check(order, positions, portfolioNotional, dailyPnl, openOrders) == RiskReject::kOk;
+  }
 
  private:
   RiskConfig config_;

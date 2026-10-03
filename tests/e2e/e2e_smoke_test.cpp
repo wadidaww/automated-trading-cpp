@@ -1,11 +1,9 @@
-#include <cassert>
-#include <cstdlib>
-#include <filesystem>
+#include <gtest/gtest.h>
 
-int main(int argc, char** argv) {
-  const auto exeDir = std::filesystem::path(argv[0]).parent_path();
-  const auto traderPath = (exeDir / "futu_trader").string();
-  const int rc = std::system((traderPath + " --health-check >/dev/null 2>&1").c_str());
-  assert(rc == 0);
-  return 0;
+#include <cstdlib>
+#include <string>
+
+TEST(E2eSmoke, HealthCheckExitsZero) {
+  const std::string cmd = std::string(FUTU_TRADER_BIN) + " --health-check >/dev/null 2>&1";
+  EXPECT_EQ(std::system(cmd.c_str()), 0);
 }

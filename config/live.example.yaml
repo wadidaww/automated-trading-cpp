@@ -1,0 +1,52 @@
+# REAL money. Copy to live.yaml, edit, and read tooling/skills/trading-risk-checklist first.
+# Starting this needs ALL of: this file's ack_phrase, FUTU_LIVE_TRADING=I_UNDERSTAND_REAL_MONEY in
+# the environment, the --live flag, and a promotion log with 5 recent consecutive clean SIMULATE
+# days. Limits below are deliberately small.
+mode: real
+
+opend:
+  host: "127.0.0.1"
+  port: 11111
+
+account:
+  id: 123456789              # the REAL account id
+  market: HK
+
+secrets:
+  trade_password_md5_file: "/etc/futu_trader/trade_pwd.md5"   # chmod 600, owned by the service user
+
+symbols:
+  - { code: "00700", lot: 100 }
+
+strategy:
+  name: meanrev
+  symbol: "00700"
+  qty: 100
+
+risk:
+  max_position_notional_hkd: 20000
+  max_portfolio_notional_hkd: 40000
+  max_order_notional_hkd: 20000
+  max_daily_loss_hkd: 500
+  max_open_orders: 3
+  concentration_limit: 1.0
+  price_band_bps: 100
+  max_quote_age_ms: 1000
+  allow_short: false
+
+rate:
+  max_per_window: 15
+  window_ms: 30000
+  reserved_for_cancels: 5
+
+engine:
+  reconcile_every_s: 15
+  cash_tolerance_hkd: 100     # REAL requires it: broker cash must match our accounting within this
+
+state:
+  dir: "/var/lib/futu_trader"
+
+live:
+  ack_phrase: "I-ACCEPT-REAL-MONEY-6789"   # must equal LiveGate::expectedPhrase(account.id)
+  promotion_log: "/var/lib/futu_trader/promotion.log"
+  required_clean_days: 5

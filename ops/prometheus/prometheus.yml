@@ -1,0 +1,19 @@
+# Scrapes the trader's loopback metrics endpoint (127.0.0.1:<metrics.port>), so Prometheus must run
+# on the same host (or use a local agent / SSH tunnel): the trader deliberately never listens on a
+# routable address.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+rule_files:
+  - alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["127.0.0.1:9093"]   # routing/receivers are site-specific: configure there
+
+scrape_configs:
+  - job_name: futu_trader
+    static_configs:
+      - targets: ["127.0.0.1:9464"]

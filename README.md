@@ -3,36 +3,32 @@
 Production-oriented C++20 algorithmic trading system scaffold for Futu OpenAPI (OpenD), with modular architecture for data ingestion, signal modeling, risk checks, execution, and evaluation.
 
 ## Architecture
-
-```mermaid
-flowchart LR
-    A[MarketDataFeed] --> B[DataStage]
-    B --> C[SignalStage]
-    C --> D[RiskStage]
-    D --> E[ExecutionStage]
-    E --> F[OrderManager/FutuClient]
-    E --> G[PositionTracker]
-    C --> H[AuditStage]
-    D --> H
-    E --> H
-```
+See [docs/architecture.md](docs/architecture.md). In short: OpenD pushes quotes into a lock-free ring, one
+engine thread runs the strategy, every order goes through the OMS (pre-trade risk, rate limit,
+write-ahead log, kill switch) to an `IVenue`, and a reconciler keeps our books equal to the broker's.
+Backtests run the same OMS against a simulated broker.
 
 ## Prerequisites
-- CMake 3.25+
-- Ninja
-- vcpkg
-- Futu OpenD gateway (paper or live account)
+- CMake 3.25+, Ninja, a C++20 compiler
+- libprotobuf, Boost (headers), OpenSSL, yaml-cpp, GoogleTest (or vcpkg)
+- Futu OpenD gateway (paper or live account) to run the trader
 
-## Quick start (Docker Compose)
+## Build and test
 ```bash
-docker compose up --build
+cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 ```
+(`ci` = ASan+UBSan with `-Werror`, `tsan` = ThreadSanitizer.)
+
+## Run (SIMULATE by default)
+```bash
+./build/dev/futu_trader --config config/paper.yaml
+```
+REAL money needs the full live gate: read `docs/runbook.md` first.
 
 ## Configuration
-Environment-specific YAML configs live in `config/`:
-- `config.dev.yaml`
-- `config.staging.yaml`
-- `config.prod.yaml`
+- `config/paper.yaml`: SIMULATE trading. Every risk limit is mandatory; unknown keys are errors.
+- `config/live.example.yaml`: REAL trading template (deliberately small limits).
+- `config/config.{dev,staging,prod}.yaml`: only for the offline `futu_model_train` tool.
 
 ## Backtesting
 ```bash

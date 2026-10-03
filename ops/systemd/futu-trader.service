@@ -1,0 +1,77 @@
+# Hardened unit for the trading process. Install to /etc/systemd/system/, then:
+#   sudo useradd --system --home /var/lib/futu_trader --shell /usr/sbin/nologin futu
+#   sudo install -d -o futu -g futu -m 0700 /var/lib/futu_trader
+#   sudo install -d -m 0755 /etc/futu_trader      # trader.yaml here; secrets files chmod 600, owner futu
+#
+# REAL trading is enabled only by a drop-in (systemctl edit futu-trader) that adds --live and the
+# FUTU_LIVE_TRADING environment variable. Never put those in this file.
+[Unit]
+Description=futu_trader automated trading (Futu OpenD)
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+# Exit 3 (a safety condition refused to start), 2 (bad config), 6 (halted while running) and 7
+# (stopped but orders may be resting) must never be retried automatically: a human has to look first.
+# If OpenD is slow after a reboot the start limit below can leave the unit "failed":
+# `systemctl reset-failed futu-trader` once OpenD is up.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=futu
+Group=futu
+ExecStart=/opt/futu_trader/bin/futu_trader --config /etc/futu_trader/trader.yaml
+Restart=on-failure
+RestartSec=10
+RestartPreventExitStatus=2 3 6 7
+# SIGTERM -> graceful stop: finish the quote in flight (up to the 5 s request timeout), drain the
+# ring, then retry cancels for up to 20 s. A SIGKILL in the middle leaves orders resting, so be generous.
+KillSignal=SIGTERM
+TimeoutStopSec=90
+# For REAL trading, make the drop-in say Restart=no: a crash must not silently resume trading. (After
+# a restart, resting orders from before the crash are adopted at bootstrap and left resting.)
+
+# Isolation
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+# engine.realtime_priority needs SCHED_FIFO: that also requires CAP_SYS_NICE in a drop-in
+# (CapabilityBoundingSet=CAP_SYS_NICE, AmbientCapabilities=CAP_SYS_NICE). Without it, set yes.
+RestrictRealtime=no
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+UMask=0077
+CapabilityBoundingSet=
+AmbientCapabilities=
+StateDirectory=futu_trader
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/futu_trader
+ReadOnlyPaths=/etc/futu_trader
+
+# Network: loopback only (OpenD and the metrics port are both local).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallArchitectures=native
+
+# Secrets and memory hygiene: no core dumps, allow mlockall.
+LimitCORE=0
+LimitMEMLOCK=infinity
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

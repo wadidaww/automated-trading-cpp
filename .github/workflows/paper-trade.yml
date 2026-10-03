@@ -1,19 +1,24 @@
-name: paper-trade
+name: paper-trade-e2e
 
+# Drives the real futu_trader process (config, WAL, kill switch, live-gate refusals, quote decoding,
+# OMS, engine, metrics, graceful stop, crash/restart) against the in-process MOCK OpenD.
+# It is NOT a paper-trading session against a real OpenD: that needs a logged-in OpenD, which only
+# a self-hosted runner can provide. Do that by hand (docs/runbook.md#promotion) before any REAL day.
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: [model-train]
-    types: [completed]
+  pull_request:
+    paths: ['src/app/**', 'src/oms/**', 'src/engine/**', 'src/infra/**', 'tools/mock_opend/**', 'config/**', 'tests/unit/application_test.cpp']
 
 jobs:
-  paper-trade:
+  e2e:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - run: docker compose up -d mock-opend
-      - run: cmake --preset dev
-      - run: cmake --build --preset dev
-      - run: ./build/dev/futu_trader --health-check
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev libyaml-cpp-dev
+      - name: Build (ASan+UBSan, warnings are errors)
+        run: cmake --preset ci && cmake --build --preset ci
+      - name: End-to-end against the mock OpenD, repeated to catch flakiness
+        run: ctest --preset ci -R '^(Application|Probe|Ops|GameDay)\.' --repeat until-fail:10 --output-on-failure

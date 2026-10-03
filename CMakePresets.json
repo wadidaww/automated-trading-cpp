@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": {"major": 3, "minor": 25, "patch": 0},
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "dev",
@@ -17,9 +21,10 @@
       "binaryDir": "${sourceDir}/build/ci",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
-        "FUTU_TRADER_BUILD_TESTS": "ON"
+        "FUTU_TRADER_BUILD_TESTS": "ON",
+        "FUTU_TRADER_WERROR": "ON"
       }
     },
     {
@@ -30,15 +35,73 @@
         "CMAKE_BUILD_TYPE": "Release",
         "FUTU_TRADER_BUILD_TESTS": "OFF"
       }
+    },
+    {
+      "name": "tsan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -Wno-tsan",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "FUTU_TRADER_WERROR": "ON",
+        "FUTU_TRADER_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "bench",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/bench",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "FUTU_TRADER_BUILD_TESTS": "OFF",
+        "FUTU_TRADER_BUILD_BENCH": "ON"
+      }
     }
   ],
   "buildPresets": [
-    {"name": "dev", "configurePreset": "dev"},
-    {"name": "ci", "configurePreset": "ci"},
-    {"name": "release", "configurePreset": "release"}
+    {
+      "name": "dev",
+      "configurePreset": "dev"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    },
+    {
+      "name": "bench",
+      "configurePreset": "bench"
+    }
   ],
   "testPresets": [
-    {"name": "dev", "configurePreset": "dev", "output": {"outputOnFailure": true}},
-    {"name": "ci", "configurePreset": "ci", "output": {"outputOnFailure": true}}
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

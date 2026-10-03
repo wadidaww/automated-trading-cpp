@@ -1,0 +1,19 @@
+# Minimal Alertmanager config to adapt. Receivers are SITE-SPECIFIC: replace the placeholders with
+# your pager (PagerDuty/Opsgenie/...) and your dead-man's-switch service, then FIRE A TEST PAGE
+# (see docs/runbook.md#going-live) before any REAL day.
+route:
+  receiver: default
+  group_by: [alertname]
+  group_wait: 0s          # a halt is not something to batch
+  repeat_interval: 30m
+  routes:
+    - matchers: [severity="page"]
+      receiver: pager
+    - matchers: [alertname="Watchdog"]
+      receiver: deadmans-switch
+      repeat_interval: 1m
+
+receivers:
+  - name: default          # warnings: chat/e-mail, configure
+  - name: pager            # CONFIGURE: e.g. pagerduty_configs / opsgenie_configs
+  - name: deadmans-switch  # CONFIGURE: a webhook to a service that alerts when it goes quiet

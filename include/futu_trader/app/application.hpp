@@ -10,7 +10,7 @@
 namespace futu_trader::app {
 
 /** Process exit codes. Anything non-zero means "do not assume trading happened as intended". */
-enum ExitCode : int {
+enum ExitCode : std::uint8_t {
   kExitOk = 0,       // stopped on request; resting orders were cancelled
   kExitUsage = 2,    // bad command line or config
   kExitRefused = 3,  // a safety condition refused startup (kill switch, live gate, corrupt WAL...)
@@ -43,7 +43,7 @@ struct RunOptions {
  *
  * Runs until `opts.stop` is set or trading halts. Blocking; returns an ExitCode.
  */
-int runTrader(const AppConfig& config, RunOptions& opts);
+int runTrader(const AppConfig& cfg, RunOptions& opts);
 
 /** Clears the persistent kill switch on a human's say-so (the operator name is audited). */
 int resetKillSwitch(const AppConfig& config, const std::string& operatorName,

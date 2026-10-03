@@ -17,7 +17,8 @@ oms::SubmitResult OmsContext::submit(const std::string& symbol, Side side, std::
     quote.quoteTimeNs = found->second.receivedNs;
   }
   quote.nowNs = clock_.nowNs();
-  const oms::OrderIntent intent{keyPrefix_ + std::to_string(++counter_), symbol, side, qty, priceMills};
+  const oms::OrderIntent intent{keyPrefix_ + std::to_string(++counter_), symbol, side, qty,
+                                priceMills};
   const oms::SubmitResult result = oms_.submit(intent, quote);
   if (observer_) {
     observer_(quote.nowNs, symbol, side, qty, priceMills, result);

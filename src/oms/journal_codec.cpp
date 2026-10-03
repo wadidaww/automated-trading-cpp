@@ -28,7 +28,7 @@ class Reader {
  public:
   explicit Reader(std::string_view bytes) : bytes_(bytes) {}
   bool u8(std::uint8_t& out) {
-    if (bytes_.size() < 1) {
+    if (bytes_.empty()) {
       return false;
     }
     out = static_cast<std::uint8_t>(bytes_[0]);

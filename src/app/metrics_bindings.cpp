@@ -1,5 +1,6 @@
 #include "futu_trader/app/metrics_bindings.hpp"
 
+#include <array>
 #include <string>
 
 namespace futu_trader::app {
@@ -25,11 +26,11 @@ struct Registrar {
   }
 };
 
-constexpr const char* kSubmitStatusName[] = {"accepted",  "rejected_by_risk", "rejected_by_venue",
-                                             "ambiguous", "duplicate",        "blocked_unresolved",
-                                             "not_ready", "invalid",          "not_durable"};
-static_assert(sizeof(kSubmitStatusName) / sizeof(kSubmitStatusName[0]) ==
-                  static_cast<std::size_t>(oms::SubmitStatus::kCount_),
+constexpr std::array<const char*, static_cast<std::size_t>(oms::SubmitStatus::kCount_)>
+    kSubmitStatusName = {"accepted",  "rejected_by_risk", "rejected_by_venue",
+                         "ambiguous", "duplicate",        "blocked_unresolved",
+                         "not_ready", "invalid",          "not_durable"};
+static_assert(kSubmitStatusName.size() == static_cast<std::size_t>(oms::SubmitStatus::kCount_),
               "every SubmitStatus needs a metric label");
 
 }  // namespace

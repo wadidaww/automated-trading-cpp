@@ -105,7 +105,7 @@ Wal::~Wal() {
   }
 }
 
-bool Wal::writeAll(const std::string& bytes) {
+bool Wal::writeAll(const std::string& bytes) const {
   std::size_t done = 0;
   while (done < bytes.size()) {
     const ssize_t n = ::write(fd_, bytes.data() + done, bytes.size() - done);

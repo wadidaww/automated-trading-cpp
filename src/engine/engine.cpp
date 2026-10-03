@@ -101,7 +101,9 @@ void Engine::fault(const std::string& why) noexcept {
   } catch (...) {
     try {
       kill_.trip(why);
-    } catch (...) {
+    } catch (
+        ...) {  // NOLINT(bugprone-empty-catch): nothing left to try; this function must not throw
+      stats_.engineFailed.store(true);  // at least make the failure visible to the supervisor
     }
   }
 }

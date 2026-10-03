@@ -25,7 +25,8 @@ namespace futu_trader {
  * silently overwritten.
  */
 template <typename T>
-class SpscRing {
+class SpscRing {  // NOLINT(clang-analyzer-optin.performance.Padding): padding is the design (one
+                  // cache line per index)
   static_assert(std::is_default_constructible_v<T>, "ring slots are default-constructed up front");
   static_assert(std::is_nothrow_copy_assignable_v<T> && std::is_nothrow_move_assignable_v<T>,
                 "tryPush copies and tryPop moves: neither may throw");

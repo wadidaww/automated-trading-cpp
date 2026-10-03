@@ -19,7 +19,7 @@ namespace {
 
 std::atomic<bool> g_stop{false};
 
-extern "C" void onSignal(int) { g_stop.store(true); }
+extern "C" void onSignal(int /*signalNumber*/) { g_stop.store(true); }
 
 void usage() {
   std::cerr << "usage: futu_trader --config FILE [--live]\n"

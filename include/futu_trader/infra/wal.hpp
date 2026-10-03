@@ -85,7 +85,7 @@ class Wal {
 
   Wal(WalConfig config, int fd);
   void run();
-  bool writeAll(const std::string& bytes);
+  bool writeAll(const std::string& bytes) const;
   Result<bool> syncFile();
 
   WalConfig config_;

@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 namespace futu_trader::infra {
@@ -83,12 +84,13 @@ Result<Secret> readSecretFile(const std::string& path) {
     return Error{ErrorCode::kInvalidArg, "secret file is empty or too large: " + path};
   }
 
-  char buffer[kMaxSecretFileBytes + 1];
+  std::array<char, kMaxSecretFileBytes + 1> storage{};
+  char* const buffer = storage.data();
   std::size_t total = 0;
-  while (total < sizeof(buffer)) {
-    const ssize_t n = ::read(fd, buffer + total, sizeof(buffer) - total);
+  while (total < storage.size()) {
+    const ssize_t n = ::read(fd, buffer + total, storage.size() - total);
     if (n < 0) {
-      secureZero(buffer, sizeof(buffer));
+      secureZero(buffer, storage.size());
       return Error{ErrorCode::kInvalidArg, "secret file read failed: " + path};
     }
     if (n == 0) {
@@ -97,7 +99,7 @@ Result<Secret> readSecretFile(const std::string& path) {
     total += static_cast<std::size_t>(n);
   }
   if (total > kMaxSecretFileBytes) {
-    secureZero(buffer, sizeof(buffer));
+    secureZero(buffer, storage.size());
     return Error{ErrorCode::kInvalidArg, "secret file is too large: " + path};
   }
   if (total > 0 && buffer[total - 1] == '\n') {
@@ -107,7 +109,7 @@ Result<Secret> readSecretFile(const std::string& path) {
     }
   }
   Secret secret{std::string_view(buffer, total)};
-  secureZero(buffer, sizeof(buffer));
+  secureZero(buffer, storage.size());
   if (secret.empty()) {
     return Error{ErrorCode::kInvalidArg, "secret file holds no value: " + path};
   }

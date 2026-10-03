@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -54,20 +55,20 @@ std::int64_t startOfHkDayNs(std::int64_t wallNs) {
 std::string hkDate(std::int64_t wallNs) {
   const auto days = std::chrono::sys_days{std::chrono::days{(wallNs + kHkOffsetNs) / kNsPerDay}};
   const std::chrono::year_month_day ymd{days};
-  char buf[16];
-  std::snprintf(buf, sizeof(buf), "%04d-%02u-%02u", static_cast<int>(ymd.year()),
+  std::array<char, 16> buf{};
+  std::snprintf(buf.data(), buf.size(), "%04d-%02u-%02u", static_cast<int>(ymd.year()),
                 static_cast<unsigned>(ymd.month()), static_cast<unsigned>(ymd.day()));
-  return buf;
+  return buf.data();
 }
 
 Log defaultLog() {
   return [](const std::string& line) {
     const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    char stamp[32];
+    std::array<char, 32> stamp{};
     std::tm tm{};
     gmtime_r(&now, &tm);
-    std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%SZ", &tm);
-    std::cerr << stamp << " " << line << "\n";
+    std::strftime(stamp.data(), stamp.size(), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    std::cerr << stamp.data() << " " << line << "\n";
   };
 }
 
@@ -441,6 +442,7 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
   } readerStopper{client};
 
   std::vector<opend::SecurityRef> securities;
+  securities.reserve(cfg.symbols.size());
   for (const auto& sym : cfg.symbols) {
     securities.push_back({opend::kQotMarketHkSecurity, sym.code});
   }

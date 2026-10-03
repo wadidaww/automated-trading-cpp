@@ -81,7 +81,8 @@ struct EngineConfig {
  * Accounting identity, valid once the ring is empty and no thread is mid-call:
  *   received == processed + staleSkipped + dropped + badSymbol + rejectedAfterStop
  */
-struct EngineStats {
+struct EngineStats {  // NOLINT(clang-analyzer-optin.performance.Padding): cache-line grouping by
+                      // writer
   // ---- written by the producer (market-data) thread ----
   alignas(kCacheLine) std::atomic<std::uint64_t> received{0};  // every onQuote call
   std::atomic<std::uint64_t> dropped{0};            // ring full: the consumer could not keep up
@@ -130,7 +131,8 @@ struct EngineStats {
  * called from any thread but are serialized. The producer must stop calling onQuote before the
  * Engine is destroyed. Debug builds assert the single-producer/single-consumer rule.
  */
-class Engine {
+class Engine {  // NOLINT(clang-analyzer-optin.performance.Padding): contains cache-line aligned
+                // members
  public:
   Engine(oms::Oms& oms, strategy::IStrategy& strategy, const portfolio::PositionBook& book,
          const Clock& clock, execution::KillSwitch& killSwitch, EngineConfig config);

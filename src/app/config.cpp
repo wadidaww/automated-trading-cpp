@@ -51,13 +51,13 @@ class Section {
   }
   std::optional<YAML::Node> optional(const std::string& key) {
     used_.insert(key);
-    const auto child = node_[key];
+    auto child = node_[key];
     if (child && !child.IsNull()) {
       return child;
     }
     return std::nullopt;
   }
-  Section sub(const std::string& key) { return Section(require(key), qualified(key)); }
+  Section sub(const std::string& key) { return {require(key), qualified(key)}; }
   std::string qualified(const std::string& key) const {
     return path_.empty() ? key : path_ + "." + key;
   }
@@ -219,7 +219,9 @@ AppConfig parseNode(const YAML::Node& root) {
     cfg.risk.maxOrderNotional = hkdToMills(s, "max_order_notional_hkd");
     cfg.risk.maxOpenOrders = static_cast<std::size_t>(positive(s, "max_open_orders"));
     cfg.risk.concentrationLimit = s.get<double>("concentration_limit");
-    if (!(cfg.risk.concentrationLimit > 0.0 && cfg.risk.concentrationLimit <= 1.0)) {
+    // Written as a negated conjunction on purpose: it also refuses NaN, which De Morgan would not.
+    if (!(cfg.risk.concentrationLimit > 0.0 &&  // NOLINT(readability-simplify-boolean-expr)
+          cfg.risk.concentrationLimit <= 1.0)) {
       fail("'risk.concentration_limit' must be in (0, 1]");
     }
     cfg.risk.priceBandBps = positive(s, "price_band_bps");

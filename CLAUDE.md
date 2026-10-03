@@ -12,7 +12,7 @@ cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan # Thre
 - Tests are GoogleTest (`tests/unit`, `tests/e2e`). Never use bare `assert` in tests (it vanishes under NDEBUG).
 - Format with `clang-format -i`; lint with `clang-tidy -p build/dev <file>`. CI blocks on both and on `-Werror`.
 - Concurrency changes must pass `ctest --preset tsan --repeat until-fail:30`.
-- vcpkg is optional (`VCPKG_ROOT`); otherwise system packages are used (needs libgtest-dev, libprotobuf-dev, protobuf-compiler, libboost-dev, libssl-dev).
+- vcpkg is optional (`VCPKG_ROOT`); otherwise system packages are used (needs libgtest-dev, libprotobuf-dev, protobuf-compiler, libboost-dev, libssl-dev, libyaml-cpp-dev).
 - Asio sockets must never be `close()`d while another thread is inside an operation on them: `shutdown()` from other threads, `close()` only after joining (TSan enforces this).
 
 ## Rules that must not be broken
@@ -31,10 +31,12 @@ cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan # Thre
 13. **Backtests run the real OMS.** `backtest::runBacktest` drives the same `Oms`, `PreTradeRisk`, `RateLimiter` and `PositionBook` as live trading against `SimVenue` (an `IVenue`). Strategies only get a `StrategyContext` (no future data, no wall clock, no venue). Never add a backtest-only shortcut around the OMS.
 14. **A backtest result is not evidence until it passes the gate:** deterministic (same hash twice), OMS reconciles clean against the broker (cash included), golden reports unchanged, honest strategies pass `--check-lookahead` and the `peeker` canary is rejected. Report trade stats NET of fees, never compare strategies on mid-marked equity alone (use `finalLiquidationEquity`), and never quote Sharpe without its confidence interval and the `ratios_reliable` flag.
 15. **Check the build's exit code, not a grep of its output.** GCC prints `: error:`; a filter for ` error ` hides failures and you end up testing a stale binary.
+16. **Write ahead, then send.** `Oms` calls the durable-submit sink (the WAL's `appendDurable`, fsynced) with no lock held BEFORE `venue.place()`. If the log refuses, nothing is sent, the submit is `kNotDurable` and trading halts. After a crash `Oms::restoreIntents` re-creates today's intents as `Unknown` (blocked, never resent) until reconciliation matches them by ClOrdId remark. Live processes must give strategy intent keys a per-process prefix (`EngineConfig::intentPrefix`), or new keys collide with restored ones.
+17. **Startup refuses what it does not understand** (`src/app/application.cpp`): tripped kill switch, corrupt WAL, account missing or of the wrong environment, any failed live-gate condition, a bootstrap or first reconciliation with drift. REAL passes a read-only startup reconciliation (`LiveGate::approveRealPending` -> `TradeTarget::realReadOnly` -> `confirm`) BEFORE a `LiveApproval` exists; a read-only target cannot place or cancel. Never add a config default for a risk limit: `parseConfig` makes every limit mandatory and rejects unknown keys.
 
 ## Layout
 `include/futu_trader/<module>/`, `src/<module>/`, `tests/{unit,e2e,golden}`, `tools/mock_opend` (test-only fake OpenD with fault injection), `futu_backtest` CLI (`src/backtest_main.cpp`), `config/*.yaml`, `tooling/{agents,skills}`.
-Roadmap (P0..P5) is in the approved plan; status: P0 done; P1 (OpenD connectivity), P2 (OMS, risk, portfolio, live gate) and P3 (backtester) done and tested against the mock/simulator only, NOT yet against a real OpenD. P2 and P3 were independently reviewed (risk-manager, security-engineer, backtest-validator agents); their findings are fixed or listed under known gaps.
+Roadmap (P0..P5) is in the approved plan; status: P0-P5 implemented and tested against the mock/simulator only, NOT yet against a real OpenD. `futu_trader --config FILE [--live]` is the trading process (`src/app/`, `src/main.cpp`); `docs/runbook.md` is the operating manual, `ops/` holds Prometheus rules, Grafana dashboard and the hardened systemd unit (`tests/unit/application_test.cpp` fails if they name a metric the process does not export). P2, P3, P4 and P5 were independently reviewed (risk-manager, security-engineer, backtest-validator, low-latency-engineer, sre-trading-ops agents); findings are fixed or listed under known gaps.
 
 ## Backtesting
 `futu_backtest --synthetic|--csv|--log ... --strategy meanrev|buyhold|random|maker|peeker [--check-determinism] [--check-lookahead] [--golden F]`; exit codes documented at the top of `src/backtest_main.cpp`. `scripts/run_backtest.sh` is the CI gate. Regenerate goldens with `--update-golden` only for an intended behaviour change, and review the diff.
@@ -45,15 +47,17 @@ Fill model (see `SimVenue`): order latency, finite displayed size consumed per q
 - Engine: the engine thread blocks on the broker (`strategy -> OMS -> venue.place()` is synchronous, tens of ms through OpenD), so order handling is not sub-millisecond and stalls quote processing; stale quotes are skipped. A dedicated order-sender thread is not built. Tail latencies are unverified (only measured on WSL2); see `docs/latency.md`, which also lists what is NOT achieved. `Oms::records` is never pruned.
 - Backtester: single-symbol CLI only (the runner itself handles several); resampling is by sample period with empty periods skipped (no trading calendar, so the overnight gap is one observation); no deflated Sharpe/multiple-testing correction; `walkForwardSplits` exists but no runner uses it yet; the Python research/model-export path is not started; historical data download (`scripts/fetch_historical_data.sh`) and the live recorder are not implemented (the event-log format and replay are).
 - Golden files compare `%.6f` floats; they could differ across compilers/libm for metrics (integer results and the journal hash are exact).
-- `LiveGate` is not wired to a `main` yet: nothing reads `FUTU_LIVE_TRADING`/`--live`, loads the promotion log, or runs the engine loop that must call `serviceHalt()`. There is no runnable trading binary yet (P3/P5).
-- Promotion log is an unauthenticated text file (guards mistakes and staleness, not a local attacker); the trade-password MD5 has no memory-hygiene handling (no zeroing, `RLIMIT_CORE`); the OpenD link is plaintext (loopback enforced, no RSA/AES).
+- The whole process has run only against the mock OpenD. `LiveGate` is wired (env var, `--live`, promotion log, read-only startup reconcile) but REAL has never run against a real OpenD or a real account.
+- Promotion log is an unauthenticated text file written by the process itself (`recordPromotionDay`): it guards mistakes and staleness, not a local attacker. The trade-password MD5 is held in a wiped `Secret`, but once copied into a protobuf message/socket buffer we do not control that memory; there is no generic log scrubber. The OpenD link is plaintext (loopback enforced, no RSA/AES).
+- Any OpenD disconnect halts trading until a human resets the kill switch (deliberately conservative: a flapping link means manual restarts).
+- Order books are decoded to top of book only, HK only; no tick/trade-tape strategy input. Lot sizes come from config, not from OpenD static info.
 - Pre-trade chain has no session/auction check, no cash/buying-power check, no drawdown check. Halting cancels orders but does not flatten positions.
 - If an order-update push arrives before its fill push, exposure is briefly understated until the fill is applied (reconciliation catches lasting drift).
-- CI/Docker supply chain (unpinned images/actions, no signing/SBOM) is untouched (P5).
+- CI/Docker supply chain: actions are pinned by SHA and base images by digest, the release job builds a SHA, produces an SBOM and signs with cosign, but none of that ran locally (only YAML-parsed), no vulnerability scanner is wired in, and CODEOWNERS/branch protection/required reviewers are repository settings that files cannot enforce.
 
 ## Known scaffold gaps (not yet real)
 `FutuClient` (legacy) is an in-memory stub and the old `TradingPipeline`/`Backtester` (ISignalModel-based) are legacy too: new work uses `opend::OpenDClient`, `oms::Oms` and `backtest::runBacktest`; `PositionTracker`/`ModelRegistry`/`DataStore` are unwired;
-`scripts/setup_opend.sh`, `deploy-prod.yml` and the `mock-opend` compose service are placeholders.
+The old `config/config.{dev,staging,prod}.yaml` belong to the legacy model-training code; the trader reads `config/paper.yaml` / `config/live.example.yaml`.
 
 ## Agents & skills (tracked in `tooling/`, symlinked into `.claude/` locally)
 Agents: quantitative-developer, execution-trader, risk-manager (veto on order-flow/live-gating changes),

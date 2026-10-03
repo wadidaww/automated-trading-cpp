@@ -89,6 +89,12 @@ struct AppConfig {
     std::string ackPhrase;
     std::string promotionLog;
     std::size_t requiredCleanDays{5};
+    /**
+     * SIMULATE only: a session that stops cleanly after at least this long is recorded as a clean
+     * day in `promotionLog` (shorter clean sessions record nothing; any halt or reconciliation
+     * problem records a dirty day regardless of length).
+     */
+    std::int64_t minSessionMinutes{240};
   } live;
 };
 

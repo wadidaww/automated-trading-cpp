@@ -84,8 +84,8 @@ struct MetricsServer::Impl : std::enable_shared_from_this<MetricsServer::Impl> {
 
     void closeNow() {
       boost::system::error_code ignored;
-      static_cast<void>(socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignored));
-      static_cast<void>(socket.close(ignored));
+      ignored = socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
+      ignored = socket.close(ignored);
     }
 
     Impl& owner;
@@ -118,7 +118,12 @@ MetricsServer::MetricsServer(const MetricsRegistry& registry, ReadyFn ready,
                              MetricsServerConfig config)
     : impl_(std::make_unique<Impl>(registry, std::move(ready), config)) {}
 
-MetricsServer::~MetricsServer() { stop(); }
+MetricsServer::~MetricsServer() {
+  try {
+    stop();
+  } catch (...) {  // NOLINT(bugprone-empty-catch): a destructor must not throw; nothing else to do
+  }
+}
 
 Result<std::uint16_t> MetricsServer::start() {
   auto& im = *impl_;
@@ -127,15 +132,15 @@ Result<std::uint16_t> MetricsServer::start() {
   }
   boost::system::error_code ec;
   const asio::ip::tcp::endpoint endpoint(asio::ip::make_address("127.0.0.1"), im.config.port);
-  static_cast<void>(im.acceptor.open(endpoint.protocol(), ec));
+  ec = im.acceptor.open(endpoint.protocol(), ec);
   if (!ec) {
-    static_cast<void>(im.acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec));
+    ec = im.acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
   }
   if (!ec) {
-    static_cast<void>(im.acceptor.bind(endpoint, ec));
+    ec = im.acceptor.bind(endpoint, ec);
   }
   if (!ec) {
-    static_cast<void>(im.acceptor.listen(asio::socket_base::max_listen_connections, ec));
+    ec = im.acceptor.listen(asio::socket_base::max_listen_connections, ec);
   }
   if (ec) {
     return Error{ErrorCode::kDisconnected, "metrics server cannot listen: " + ec.message()};
@@ -156,7 +161,7 @@ void MetricsServer::stop() {
   // Post the close so it runs on the io thread: asio objects are not thread-safe.
   asio::post(im.io, [&im] {
     boost::system::error_code ignored;
-    static_cast<void>(im.acceptor.close(ignored));
+    ignored = im.acceptor.close(ignored);
   });
   im.io.stop();
   if (im.thread.joinable()) {

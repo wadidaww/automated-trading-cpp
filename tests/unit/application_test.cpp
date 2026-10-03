@@ -9,9 +9,12 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <regex>
+#include <set>
 #include <thread>
 
 #include "../../tools/mock_opend/mock_opend.hpp"
+#include "futu_trader/app/probe.hpp"
 #include "futu_trader/execution/kill_switch.hpp"
 #include "futu_trader/infra/wal.hpp"
 #include "futu_trader/oms/journal_codec.hpp"
@@ -360,4 +363,115 @@ TEST(Application, CrashBetweenSendAndReplyDoesNotDuplicateTheOrderAfterRestart) 
     withFirstRemark += o.remark == firstRemark ? 1U : 0U;
   }
   EXPECT_EQ(withFirstRemark, 1U);  // never a second copy of the lost-reply order
+}
+
+// The alert rules and the dashboard are written by hand; this keeps them honest. A rule that names
+// a metric the process does not export would never fire, silently.
+TEST(Ops, AlertRulesAndDashboardOnlyReferenceMetricsTheProcessExports) {
+  Env env;
+  Running run(env.config(env.yaml()), {});
+  const auto info = run.ready.get_future().get();
+  const auto exposition = httpGet(info.metricsPort, "/metrics");
+  ASSERT_NE(exposition.find("# TYPE futu_oms_live_orders gauge"), std::string::npos) << exposition;
+  std::set<std::string> exported;
+  const std::regex typeLine("# TYPE (futu_[a-z0-9_]+) ");
+  for (std::sregex_iterator it(exposition.begin(), exposition.end(), typeLine), end; it != end;
+       ++it) {
+    exported.insert((*it)[1]);
+  }
+  ASSERT_GT(exported.size(), 30U);
+
+  for (const char* file : {"/prometheus/alerts.yml", "/grafana/dashboards/futu_trader.json"}) {
+    std::ifstream in(std::string(FUTU_OPS_DIR) + file);
+    ASSERT_TRUE(in.good()) << file;
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::regex ident("futu_[a-z0-9_]+");
+    std::size_t checked = 0;
+    for (std::sregex_iterator it(text.begin(), text.end(), ident), end; it != end; ++it) {
+      std::string name = it->str();
+      for (const char* suffix : {"_bucket", "_sum", "_count"}) {
+        const std::string s(suffix);
+        if (name.size() > s.size() && name.compare(name.size() - s.size(), s.size(), s) == 0) {
+          name.resize(name.size() - s.size());
+          break;
+        }
+      }
+      // Names that are not metrics: the job, rule groups, and a path mentioned in an annotation.
+      if (name == "futu_trader" || name == "futu_trader_critical" ||
+          name == "futu_trader_warning" || name == "futu_proto") {
+        continue;
+      }
+      EXPECT_TRUE(exported.contains(name)) << file << " references unknown metric " << name;
+      ++checked;
+    }
+    EXPECT_GT(checked, 10U) << file;
+  }
+  run.finish();
+}
+
+TEST(Probe, ReadyWhileTradingAndNotReadyOnceStoppedOrWhenNothingListens) {
+  Env env;
+  std::uint16_t port = 0;
+  {
+    Running run(env.config(env.yaml()), {});
+    port = run.ready.get_future().get().metricsPort;
+    EXPECT_TRUE(probeReady(port, std::chrono::seconds(2)));
+    env.server.stop();  // OpenD goes away: the link drops, the process halts, readiness must fall
+    EXPECT_TRUE(waitFor([&] { return !probeReady(port, std::chrono::milliseconds(300)); }));
+    EXPECT_EQ(run.finish(), kExitHalted) << run.log();
+  }
+  EXPECT_FALSE(probeReady(port, std::chrono::milliseconds(300)));  // process gone
+}
+
+// ---- Promotion evidence written by SIMULATE sessions
+// ----------------------------------------------
+
+namespace {
+std::string readFile(const std::filesystem::path& p) {
+  std::ifstream in(p);
+  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+}  // namespace
+
+TEST(Application, ACleanSimulateSessionRecordsACleanDayAndAHaltRecordsADirtyOne) {
+  Env env;
+  const auto promo = env.dir / "promotion.log";
+  auto cfg = env.config(env.yaml());
+  cfg.live.promotionLog = promo.string();
+  cfg.live.minSessionMinutes = 0;
+  {
+    RunOptions options;
+    options.today = "2026-10-01";
+    Running run(cfg, options);
+    run.ready.get_future().get();
+    EXPECT_EQ(run.finish(), kExitOk) << run.log();
+  }
+  EXPECT_EQ(readFile(promo), "2026-10-01 clean\n");
+  EXPECT_EQ(std::filesystem::status(promo).permissions() & std::filesystem::perms::others_read,
+            std::filesystem::perms::none);
+
+  {
+    RunOptions options;
+    options.today = "2026-10-02";
+    Running run(cfg, options);
+    run.ready.get_future().get();
+    env.server.stop();  // OpenD vanishes: trading halts
+    EXPECT_EQ(run.finish(), kExitHalted) << run.log();
+  }
+  EXPECT_EQ(readFile(promo), "2026-10-01 clean\n2026-10-02 dirty\n");
+}
+
+TEST(Application, AShortCleanSessionRecordsNothing) {
+  Env env;
+  const auto promo = env.dir / "promotion.log";
+  auto cfg = env.config(env.yaml());
+  cfg.live.promotionLog = promo.string();
+  cfg.live.minSessionMinutes = 240;
+  RunOptions options;
+  options.today = "2026-10-01";
+  Running run(cfg, options);
+  run.ready.get_future().get();
+  EXPECT_EQ(run.finish(), kExitOk);
+  EXPECT_FALSE(std::filesystem::exists(promo));
+  EXPECT_NE(run.log().find("nothing recorded"), std::string::npos) << run.log();
 }

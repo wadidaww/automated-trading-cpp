@@ -10,7 +10,7 @@ constexpr unsigned kSubBits = 4;  // log2(kSubBuckets)
 
 unsigned floorLog2(std::uint64_t v) {
   unsigned r = 0;
-  while (v >>= 1U) {
+  while ((v >>= 1U) != 0) {
     ++r;
   }
   return r;

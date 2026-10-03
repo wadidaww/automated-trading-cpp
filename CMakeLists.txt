@@ -48,6 +48,8 @@ add_library(futu_trader
   src/app/metrics_bindings.cpp
   src/app/config.cpp
   src/app/application.cpp
+  src/app/probe.cpp
+  src/app/promotion.cpp
   src/infra/metrics_server.cpp
   src/data/csv.cpp
   src/data/validate.cpp
@@ -133,6 +135,7 @@ if(FUTU_TRADER_BUILD_TESTS)
       tests/unit/secrets_test.cpp
       tests/unit/config_test.cpp
       tests/unit/application_test.cpp
+      tests/unit/promotion_test.cpp
       tests/unit/quote_decode_test.cpp
       tests/unit/oms_durable_test.cpp
       tests/unit/backtest_metrics_test.cpp
@@ -156,7 +159,8 @@ if(FUTU_TRADER_BUILD_TESTS)
       tests/unit/pipeline_test.cpp
     )
     target_link_libraries(futu_unit_tests PRIVATE futu_trader futu_mock_opend GTest::gtest_main)
-    target_compile_definitions(futu_unit_tests PRIVATE FUTU_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
+    target_compile_definitions(futu_unit_tests PRIVATE FUTU_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config"
+      FUTU_OPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ops")
     gtest_discover_tests(futu_unit_tests)
 
     # Regression gate: a fixed synthetic backtest must reproduce the committed golden report

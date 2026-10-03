@@ -50,3 +50,10 @@ state:
 metrics:
   enabled: true
   port: 9464                  # Prometheus scrape, bound to 127.0.0.1
+
+# SIMULATE sessions leave evidence for the live gate: a clean stop after min_session_minutes records
+# a clean day here; any halt or reconciliation problem records a dirty day. REAL needs 5 recent
+# consecutive clean days in this file (see docs/runbook.md#going-live).
+live:
+  promotion_log: "var/futu_trader/promotion.log"
+  min_session_minutes: 240

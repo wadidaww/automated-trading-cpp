@@ -2,18 +2,21 @@
 //
 //   futu_trader --config FILE [--live]
 //   futu_trader --config FILE --reset-kill-switch --operator NAME
-//   futu_trader --health-check
+//   futu_trader --health-check          process is alive (no checks)
+//   futu_trader --probe PORT            exit 0 only if 127.0.0.1:PORT/readyz says ready
 //
 // Exit codes: 0 stopped cleanly; 2 usage/config error; 3 a safety condition refused startup;
 // 4 OpenD unreachable or a broker step failed; 6 trading halted while running.
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <string>
 
 #include "futu_trader/app/application.hpp"
+#include "futu_trader/app/probe.hpp"
 
 namespace {
 
@@ -24,7 +27,8 @@ extern "C" void onSignal(int /*signalNumber*/) { g_stop.store(true); }
 void usage() {
   std::cerr << "usage: futu_trader --config FILE [--live]\n"
                "       futu_trader --config FILE --reset-kill-switch --operator NAME\n"
-               "       futu_trader --health-check\n";
+               "       futu_trader --health-check\n"
+               "       futu_trader --probe PORT\n";
 }
 
 }  // namespace
@@ -40,6 +44,14 @@ int main(int argc, char** argv) {
     if (arg == "--health-check") {
       std::cout << "ok\n";
       return 0;
+    }
+    if (arg == "--probe" && i + 1 < argc) {
+      const long port = std::strtol(argv[++i], nullptr, 10);
+      if (port < 1 || port > 65535) {
+        usage();
+        return kExitUsage;
+      }
+      return probeReady(static_cast<std::uint16_t>(port), std::chrono::seconds(3)) ? 0 : 1;
     }
     if (arg == "--config" && i + 1 < argc) {
       configPath = argv[++i];

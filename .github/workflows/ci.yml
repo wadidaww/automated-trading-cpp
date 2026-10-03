@@ -16,9 +16,9 @@ jobs:
       matrix:
         preset: [ci, tsan]  # ci = asan+ubsan; tsan = ThreadSanitizer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev libyaml-cpp-dev
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build (warnings are errors)
@@ -31,9 +31,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev clang-tidy clang-format
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev libyaml-cpp-dev clang-tidy clang-format
       - name: Configure (exports compile_commands.json)
         run: cmake --preset dev
       - name: Generate protobuf headers (clang-tidy needs the *.pb.h files)
@@ -48,9 +48,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev gcovr
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev libyaml-cpp-dev gcovr
       - name: Configure with coverage
         run: >
           cmake -S . -B build/cov -G Ninja -DCMAKE_BUILD_TYPE=Debug
@@ -69,14 +69,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libprotobuf-dev protobuf-compiler libboost-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libprotobuf-dev protobuf-compiler libboost-dev libssl-dev libyaml-cpp-dev
       - name: Build benchmarks
         run: cmake --preset bench && cmake --build --preset bench
       - name: Run (quick, informational)
         run: ./build/bench/futu_bench --quick --json bench.json | tee bench.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bench-smoke
           path: |

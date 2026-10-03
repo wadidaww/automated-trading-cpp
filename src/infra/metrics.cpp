@@ -89,7 +89,7 @@ bool MetricsRegistry::validName(const std::string& name) {
     const char c = name[i];
     const bool alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':';
     const bool digit = c >= '0' && c <= '9';
-    if (!(alpha || (digit && i > 0))) {
+    if (!alpha && (!digit || i == 0)) {
       return false;
     }
   }
@@ -97,14 +97,14 @@ bool MetricsRegistry::validName(const std::string& name) {
 }
 
 bool MetricsRegistry::validLabelName(const std::string& name) {
-  if (name.empty() || name.rfind("__", 0) == 0) {  // "__" prefix is reserved for Prometheus
+  if (name.empty() || name.starts_with("__")) {  // "__" prefix is reserved for Prometheus
     return false;
   }
   for (std::size_t i = 0; i < name.size(); ++i) {
     const char c = name[i];
     const bool alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
     const bool digit = c >= '0' && c <= '9';
-    if (!(alpha || (digit && i > 0))) {
+    if (!alpha && (!digit || i == 0)) {
       return false;
     }
   }

@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "futu_trader/app/metrics_bindings.hpp"
+#include "futu_trader/app/promotion.hpp"
 #include "futu_trader/core/clock.hpp"
 #include "futu_trader/engine/engine.hpp"
 #include "futu_trader/execution/kill_switch.hpp"
@@ -523,6 +524,7 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
   }
 
   // 8. Trade.
+  const auto sessionStart = std::chrono::steady_clock::now();
   engine.start();
   log("trading started (" + cfg.strategy.name + " on " + cfg.strategy.symbol + ")");
   if (opts.onRunning) {
@@ -545,6 +547,23 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
     log("cancel requested for " + std::to_string(report.cancelRequested) + " order(s), " +
         std::to_string(report.cancelFailed) + " failed, " +
         std::to_string(report.unresolvedWithoutVenueId) + " of unknown outcome");
+  }
+  // SIMULATE sessions leave evidence for the live gate: one line per day, dirty is sticky.
+  if (!real && !cfg.live.promotionLog.empty()) {
+    const auto minutes = std::chrono::duration_cast<std::chrono::minutes>(
+                             std::chrono::steady_clock::now() - sessionStart)
+                             .count();
+    const bool problems = halted || engine.stats().reconcileProblems.load() != 0 ||
+                          oms.anomalyCount() != 0 || oms.unresolvedCount() != 0 ||
+                          router.foreign() != 0;
+    const std::string date = opts.today.empty() ? hkDate(wallNowNs()) : opts.today;
+    if (problems || minutes >= cfg.live.minSessionMinutes) {
+      const auto recorded = recordPromotionDay(cfg.live.promotionLog, date, !problems);
+      log(recorded ? "promotion log: " + date + (problems ? " dirty" : " clean")
+                   : "promotion log NOT updated: " + recorded.error().message);
+    } else {
+      log("promotion log: session shorter than live.min_session_minutes, nothing recorded");
+    }
   }
   if (server) {
     server->stop();

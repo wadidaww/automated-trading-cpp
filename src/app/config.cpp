@@ -284,6 +284,10 @@ AppConfig parseNode(const YAML::Node& root) {
     cfg.live.promotionLog = s.getOr<std::string>("promotion_log", "");
     cfg.live.requiredCleanDays =
         static_cast<std::size_t>(s.getOr<std::int64_t>("required_clean_days", 5));
+    cfg.live.minSessionMinutes = s.getOr<std::int64_t>("min_session_minutes", 240);
+    if (cfg.live.minSessionMinutes < 0) {
+      fail("'live.min_session_minutes' must be >= 0");
+    }
     if (cfg.live.requiredCleanDays < 5) {
       fail("'live.required_clean_days' must be at least 5");
     }

@@ -21,6 +21,7 @@ option(FUTU_TRADER_BUILD_BENCH "Build the futu_bench micro-benchmarks" OFF)
 find_package(Threads REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(Boost REQUIRED)  # header-only Boost.Asio
+find_package(yaml-cpp REQUIRED)  # strict config parsing
 find_package(OpenSSL REQUIRED)  # hardware-accelerated SHA-1 for the OpenD frame header
 
 # Official Futu OpenD protobuf definitions, vendored and version-pinned (see PROTO_VERSION).
@@ -43,6 +44,10 @@ add_library(futu_trader
   src/infra/thread_tuning.cpp
   src/infra/metrics.cpp
   src/infra/wal.cpp
+  src/infra/secrets.cpp
+  src/app/metrics_bindings.cpp
+  src/app/config.cpp
+  src/app/application.cpp
   src/infra/metrics_server.cpp
   src/data/csv.cpp
   src/data/validate.cpp
@@ -57,6 +62,7 @@ add_library(futu_trader
   src/portfolio/position_book.cpp
   src/oms/live_gate.cpp
   src/oms/oms.cpp
+  src/oms/journal_codec.cpp
   src/oms/push_router.cpp
   src/execution/rate_limiter.cpp
   src/execution/kill_switch.cpp
@@ -65,6 +71,7 @@ add_library(futu_trader
   src/opend/connection.cpp
   src/opend/client.cpp
   src/opend/trade_decode.cpp
+  src/opend/quote_decode.cpp
   src/api/futu_client.cpp
   src/data/data_normalizer.cpp
   src/data/market_data.cpp
@@ -83,7 +90,7 @@ add_library(futu_trader
 
 target_include_directories(futu_trader PUBLIC include)
 target_link_libraries(futu_trader PUBLIC futu_proto Threads::Threads Boost::headers)
-target_link_libraries(futu_trader PRIVATE OpenSSL::Crypto)
+target_link_libraries(futu_trader PRIVATE OpenSSL::Crypto yaml-cpp::yaml-cpp)
 target_compile_options(futu_trader PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 if(FUTU_TRADER_WERROR)
   target_compile_options(futu_trader PRIVATE -Werror)
@@ -123,6 +130,11 @@ if(FUTU_TRADER_BUILD_TESTS)
       tests/unit/engine_test.cpp
       tests/unit/metrics_test.cpp
       tests/unit/wal_test.cpp
+      tests/unit/secrets_test.cpp
+      tests/unit/config_test.cpp
+      tests/unit/application_test.cpp
+      tests/unit/quote_decode_test.cpp
+      tests/unit/oms_durable_test.cpp
       tests/unit/backtest_metrics_test.cpp
       tests/unit/sim_venue_test.cpp
       tests/unit/backtest_runner_test.cpp
@@ -144,6 +156,7 @@ if(FUTU_TRADER_BUILD_TESTS)
       tests/unit/pipeline_test.cpp
     )
     target_link_libraries(futu_unit_tests PRIVATE futu_trader futu_mock_opend GTest::gtest_main)
+    target_compile_definitions(futu_unit_tests PRIVATE FUTU_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
     gtest_discover_tests(futu_unit_tests)
 
     # Regression gate: a fixed synthetic backtest must reproduce the committed golden report

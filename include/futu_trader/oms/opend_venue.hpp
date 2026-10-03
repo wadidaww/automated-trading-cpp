@@ -18,9 +18,15 @@ class OpenDVenue final : public IVenue {
   const TradeTarget& target() const { return target_; }
 
   Result<opend::PlacedOrder> place(const opend::PlaceOrderRequest& request) override {
+    if (target_.readOnly()) {
+      return Error{ErrorCode::kInvalidArg, "read-only target cannot place orders"};
+    }
     return client_.placeOrder(header_, request);
   }
   Result<bool> cancel(std::uint64_t venueOrderId) override {
+    if (target_.readOnly()) {
+      return Error{ErrorCode::kInvalidArg, "read-only target cannot cancel orders"};
+    }
     return client_.cancelOrder(header_, venueOrderId);
   }
   Result<std::vector<opend::BrokerOrder>> listOrders() override {

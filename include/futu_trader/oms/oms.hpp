@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -90,6 +92,8 @@ enum class SubmitStatus : std::uint8_t {
   kBlockedUnresolved,  // this intent key has an unresolved (Unknown) order
   kNotReady,           // bootstrap() has not succeeded yet
   kInvalid,
+  kNotDurable,  // the write-ahead log refused the intent: nothing was sent (fail closed)
+  kCount_,      // not a status: array sizing
 };
 
 struct SubmitResult {
@@ -97,6 +101,18 @@ struct SubmitResult {
   std::string clOrdId;
   RiskReject risk{RiskReject::kOk};
   std::string detail;
+};
+
+/** One order intent as written ahead of the send; see oms/journal_codec.hpp. */
+struct DurableSubmit;
+
+/** Lock-free counters for metrics. Monotonic; read from any thread. */
+struct OmsStats {
+  std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(SubmitStatus::kCount_)> submits{};
+  // Indexed by RiskReject (kept as raw size so this header need not include the enum's definition).
+  std::array<std::atomic<std::uint64_t>, 32> riskRejects{};
+  std::atomic<std::uint64_t> durableFailures{0};
+  std::atomic<std::uint64_t> restoredIntents{0};
 };
 
 enum class DriftKind : std::uint8_t {
@@ -182,6 +198,12 @@ class Oms {
    */
   HaltReport haltAndCancelAll(const std::string& reason);
   /**
+   * Graceful shutdown: cancels every live order WITHOUT tripping the kill switch (a planned stop is
+   * not an incident, and a tripped switch would need a human reset on the next start). Orders
+   * without a venue id (unknown outcome) cannot be cancelled and are counted for the caller.
+   */
+  HaltReport cancelAllLive();
+  /**
    * Trips the kill switch and schedules a cancel-all WITHOUT talking to the venue; serviceHalt()
    * carries it out. For callers that want a halt but must not block (or must not double-send
    * cancels that another thread already sent).
@@ -203,6 +225,22 @@ class Oms {
 
   /** Compares our view with the broker's; heals what is understood, halts on the rest. */
   ReconcileReport reconcile();
+  /**
+   * Called with NO lock held, after the order passed risk and before it is sent. Returning an
+   * error means the intent could not be made durable: the order is NOT sent, the submit reports
+   * kNotDurable and trading halts (a log that cannot be written cannot protect a restart).
+   */
+  void setDurableSubmitSink(std::function<Result<bool>(const DurableSubmit&)> sink);
+  /**
+   * Call after a restart and BEFORE bootstrap(): re-creates each logged intent as an order of
+   * unknown outcome under its original ClOrdId and intent key. A reconciliation then finds it at
+   * the broker (it carries the ClOrdId in its remark) or, after the grace period and several clean
+   * listings, declares it dead; until then its key stays blocked, so a lost reply cannot be
+   * followed by a second copy of the order. Entries older than `notBeforeNs` (earlier days, which
+   * the broker no longer lists) are skipped. Returns how many were restored.
+   */
+  std::size_t restoreIntents(const std::vector<DurableSubmit>& intents, std::int64_t notBeforeNs);
+  const OmsStats& stats() const;
   /** Marks "now" as the start of the trading day for daily-loss accounting. */
   void resetDailyBaseline();
 

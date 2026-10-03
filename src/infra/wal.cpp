@@ -53,7 +53,28 @@ Result<std::unique_ptr<Wal>> Wal::open(const WalConfig& config) {
                  "cannot open WAL '" + config.path + "': " + std::strerror(errno)};
   }
   std::unique_ptr<Wal> wal(new Wal(config, fd));
-  const off_t size = ::lseek(fd, 0, SEEK_END);
+  off_t size = ::lseek(fd, 0, SEEK_END);
+  if (size > 0) {
+    if (size < 8) {
+      // A crash while the very first header was being written: nothing was ever logged.
+      if (::ftruncate(fd, 0) != 0 || ::fdatasync(fd) != 0) {
+        return Error{ErrorCode::kDisconnected, "cannot repair WAL header in '" + config.path + "'"};
+      }
+      size = 0;
+    } else {
+      const auto existing = readWal(config.path);
+      if (existing.status == WalStatus::kTruncated) {
+        if (::ftruncate(fd, static_cast<off_t>(existing.validBytes)) != 0 || ::fdatasync(fd) != 0) {
+          return Error{ErrorCode::kDisconnected, "cannot cut torn tail off '" + config.path + "'"};
+        }
+      } else if (existing.status != WalStatus::kOk) {
+        return Error{ErrorCode::kProtocol,
+                     "WAL '" + config.path +
+                         "' is corrupt (not just a torn tail); refusing to append. Inspect it and "
+                         "move it aside deliberately."};
+      }
+    }
+  }
   if (size == 0) {
     std::string header = "FWAL";
     header.push_back(static_cast<char>(kWalVersion & 0xFFU));
@@ -234,6 +255,7 @@ WalReadResult readWal(const std::string& path) {
     result.status = WalStatus::kBadVersion;
     return result;
   }
+  result.validBytes = 8;
   while (true) {
     std::array<std::uint8_t, 4> lenBytes{};
     in.read(reinterpret_cast<char*>(lenBytes.data()), 4);
@@ -267,6 +289,7 @@ WalReadResult readWal(const std::string& path) {
       result.status = WalStatus::kBadChecksum;
       return result;
     }
+    result.validBytes += 8 + len;
     result.records.push_back(std::move(payload));
   }
 }

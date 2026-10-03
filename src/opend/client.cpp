@@ -316,6 +316,13 @@ Result<bool> OpenDClient::unlockTrade(bool unlock, const std::string& pwdMd5) {
   return true;
 }
 
+Result<bool> OpenDClient::unlockTrade(const infra::Secret& pwdMd5) {
+  if (pwdMd5.empty()) {
+    return Error{ErrorCode::kInvalidArg, "trade password hash is empty"};
+  }
+  return unlockTrade(true, std::string(pwdMd5.reveal()));
+}
+
 Result<bool> OpenDClient::sendAccountPush(const std::vector<std::uint64_t>& accIds) {
   Trd_SubAccPush::Request req;
   for (const auto id : accIds) {

@@ -9,6 +9,8 @@
 #include "futu_trader/execution/kill_switch.hpp"
 #include "futu_trader/execution/rate_limiter.hpp"
 #include "futu_trader/oms/live_gate.hpp"
+#include "futu_trader/oms/opend_venue.hpp"
+#include "futu_trader/opend/client.hpp"
 #include "test_support.hpp"
 
 using namespace futu_trader;
@@ -364,3 +366,92 @@ static_assert(!std::is_constructible_v<LiveApproval, std::uint64_t>);
 static_assert(!std::is_default_constructible_v<opend::AccountHeader>);
 static_assert(
     !std::is_constructible_v<opend::AccountHeader, TrdEnv, std::uint64_t, opend::TrdMarket>);
+
+// ---- Two-stage approval (startup reconciliation needs a read-only REAL view first)
+// -----------------
+
+static_assert(!std::is_default_constructible_v<PendingLiveApproval>);
+static_assert(!std::is_constructible_v<PendingLiveApproval, std::uint64_t>);
+
+TEST(LiveGatePending, PassesEveryGateExceptReconcileWhichIsIgnored) {
+  auto in = validInput();
+  in.startupReconcileClean = false;
+  EXPECT_FALSE(LiveGate::approveReal(in).ok());        // the full gate still refuses
+  EXPECT_TRUE(LiveGate::approveRealPending(in).ok());  // the pending stage does not look at it
+}
+
+TEST(LiveGatePending, EveryOtherGateStillBlocksThePendingStage) {
+  {
+    auto in = validInput();
+    in.cliLiveFlag = false;
+    EXPECT_FALSE(LiveGate::approveRealPending(in).ok());
+  }
+  {
+    auto in = validInput();
+    in.envVar = "yes";
+    EXPECT_FALSE(LiveGate::approveRealPending(in).ok());
+  }
+  {
+    auto in = validInput();
+    in.configPhrase = "";
+    EXPECT_FALSE(LiveGate::approveRealPending(in).ok());
+  }
+  {
+    auto in = validInput();
+    in.promotion.clear();
+    EXPECT_FALSE(LiveGate::approveRealPending(in).ok());
+  }
+  {
+    auto in = validInput();
+    in.tradeUnlocked = false;
+    EXPECT_FALSE(LiveGate::approveRealPending(in).ok());
+  }
+  {
+    auto in = validInput();
+    in.brokerAccounts.clear();
+    EXPECT_FALSE(LiveGate::approveRealPending(in).ok());
+  }
+}
+
+TEST(LiveGatePending, ConfirmNeedsACleanReconcileAndYieldsAnApprovalForTheSameAccount) {
+  const auto pending = LiveGate::approveRealPending(validInput());
+  ASSERT_TRUE(pending.ok());
+  EXPECT_FALSE(LiveGate::confirm(pending.value(), false).ok());
+  const auto approval = LiveGate::confirm(pending.value(), true);
+  ASSERT_TRUE(approval.ok());
+  EXPECT_EQ(approval.value().accId(), 123456789U);
+}
+
+TEST(TradeTarget, ReadOnlyRealTargetIsBoundToItsAccountAndFlaggedReadOnly) {
+  const auto pending = LiveGate::approveRealPending(validInput());
+  ASSERT_TRUE(pending.ok());
+  EXPECT_FALSE(TradeTarget::realReadOnly(pending.value(), 555, opend::TrdMarket::kHK).ok());
+  const auto target = TradeTarget::realReadOnly(pending.value(), 123456789, opend::TrdMarket::kHK);
+  ASSERT_TRUE(target.ok());
+  EXPECT_TRUE(target.value().readOnly());
+  EXPECT_EQ(target.value().env(), TrdEnv::kReal);
+  EXPECT_FALSE(TradeTarget::simulate(1, opend::TrdMarket::kHK).readOnly());
+  const auto full = LiveGate::approveReal(validInput());
+  EXPECT_FALSE(
+      TradeTarget::real(full.value(), 123456789, opend::TrdMarket::kHK).value().readOnly());
+}
+
+TEST(TradeTarget, ReadOnlyVenueRefusesToPlaceOrCancelWithoutTouchingTheWire) {
+  const auto pending = LiveGate::approveRealPending(validInput());
+  ASSERT_TRUE(pending.ok());
+  const auto target = TradeTarget::realReadOnly(pending.value(), 123456789, opend::TrdMarket::kHK);
+  ASSERT_TRUE(target.ok());
+  opend::OpenDClient client{
+      opend::ClientConfig{}};  // never connected: any wire use would error differently
+  OpenDVenue venue(client, target.value());
+  opend::PlaceOrderRequest request;
+  request.code = "00700";
+  request.qty = 100;
+  request.priceMills = 350'000;
+  const auto placed = venue.place(request);
+  ASSERT_FALSE(placed.ok());
+  EXPECT_NE(placed.error().message.find("read-only"), std::string::npos);
+  const auto cancelled = venue.cancel(1);
+  ASSERT_FALSE(cancelled.ok());
+  EXPECT_NE(cancelled.error().message.find("read-only"), std::string::npos);
+}

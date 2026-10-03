@@ -66,6 +66,8 @@ struct EngineConfig {
   bool busyPoll{false};
   std::chrono::microseconds idleSleep{200};
   std::uint64_t seed{1};
+  /** Prefix of strategy intent keys; live processes must make it unique per start. */
+  std::string intentPrefix{"S"};
   /** Best-effort thread placement (-1 = leave to the scheduler); results are in EngineStats. */
   int engineCpu{-1};
   int reconcilerCpu{-1};

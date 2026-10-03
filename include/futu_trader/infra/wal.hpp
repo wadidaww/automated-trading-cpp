@@ -55,7 +55,12 @@ struct WalStats {
 
 class Wal {
  public:
-  /** Opens (creating if needed) and starts the writer thread. Appends to an existing log. */
+  /**
+   * Opens (creating if needed) and starts the writer thread. Appends to an existing log, after
+   * checking it: a torn tail left by a crash is cut off first (otherwise every record appended
+   * later would sit behind garbage and be unreachable on the next read), and a log that is corrupt
+   * anywhere else is REFUSED, because a log that may be missing intents cannot protect a restart.
+   */
   static Result<std::unique_ptr<Wal>> open(const WalConfig& config);
   ~Wal();
   Wal(const Wal&) = delete;
@@ -108,6 +113,8 @@ enum class WalStatus : std::uint8_t {
 struct WalReadResult {
   std::vector<std::string> records;
   WalStatus status{WalStatus::kOk};
+  /** Byte offset just past the last intact record (8 for a header-only log). */
+  std::uint64_t validBytes{0};
 };
 
 /** Reads a WAL file. A missing file is kUnreadable; an empty (header-only) log is kOk. */

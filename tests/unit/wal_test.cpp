@@ -262,3 +262,60 @@ TEST(Wal, ADiskWriteFailureFailsClosedForEverySubsequentAppend) {
   ASSERT_TRUE(WIFEXITED(status));
   EXPECT_EQ(WEXITSTATUS(status), 0) << "10: open failed, 11: failure not detected / not sticky";
 }
+
+TEST(Wal, ReopeningAfterATornTailCutsItOffSoLaterRecordsAreReachable) {
+  TempFile file("futu_wal_repair.wal");
+  std::string twoRecords;
+  std::string threeRecords;
+  {
+    auto wal = Wal::open({file.path});
+    ASSERT_TRUE(wal.ok());
+    ASSERT_TRUE(wal.value()->appendDurable("before-crash-1").ok());
+    ASSERT_TRUE(wal.value()->appendDurable("before-crash-2").ok());
+    twoRecords = slurp(file.path);
+    ASSERT_TRUE(wal.value()->appendDurable("was-being-written-at-crash").ok());
+    threeRecords = slurp(file.path);
+  }
+  // A crash can stop the third write after ANY number of bytes: try every one of them.
+  for (std::size_t cut = twoRecords.size(); cut < threeRecords.size(); ++cut) {
+    spit(file.path, threeRecords.substr(0, cut));
+    {
+      auto wal = Wal::open({file.path});
+      ASSERT_TRUE(wal.ok()) << "cut=" << cut;
+      ASSERT_TRUE(wal.value()->appendDurable("after-restart").ok());
+    }
+    const auto read = readWal(file.path);
+    EXPECT_EQ(read.status, WalStatus::kOk) << "cut=" << cut;
+    EXPECT_EQ(read.records,
+              (std::vector<std::string>{"before-crash-1", "before-crash-2", "after-restart"}))
+        << "cut=" << cut;
+  }
+}
+
+TEST(Wal, ATornHeaderIsRepairedAsAnEmptyLog) {
+  TempFile file("futu_wal_halfheader.wal");
+  spit(file.path, "FWA");
+  auto wal = Wal::open({file.path});
+  ASSERT_TRUE(wal.ok());
+  ASSERT_TRUE(wal.value()->appendDurable("x").ok());
+  wal.value().reset();
+  EXPECT_EQ(readWal(file.path).records, (std::vector<std::string>{"x"}));
+}
+
+TEST(Wal, ACorruptLogIsRefusedNotAppendedToOrOverwritten) {
+  TempFile file("futu_wal_refuse.wal");
+  {
+    auto wal = Wal::open({file.path});
+    ASSERT_TRUE(wal.ok());
+    ASSERT_TRUE(wal.value()->appendDurable("intent-1").ok());
+    ASSERT_TRUE(wal.value()->appendDurable("intent-2").ok());
+  }
+  std::string bytes = slurp(file.path);
+  bytes[12] = static_cast<char>(bytes[12] ^ 0x01);  // inside the first record's payload
+  spit(file.path, bytes);
+  EXPECT_FALSE(Wal::open({file.path}).ok());
+  EXPECT_EQ(slurp(file.path), bytes);  // untouched: evidence preserved
+
+  spit(file.path, "this is definitely not a wal file");
+  EXPECT_FALSE(Wal::open({file.path}).ok());
+}

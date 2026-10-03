@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Common.pb.h"
+#include "futu_trader/infra/secrets.hpp"
 #include "futu_trader/opend/connection.hpp"
 #include "futu_trader/opend/types.hpp"
 
@@ -61,6 +62,8 @@ class OpenDClient {
   // header (and therefore SIMULATE vs REAL) is stamped in exactly one place. ---
   /** Unlocks (or re-locks) trading with the MD5 of the trade password. Never log the argument. */
   Result<bool> unlockTrade(bool unlock, const std::string& pwdMd5);
+  /** Unlocks with a trade-password MD5 held as a wiped-on-destruction Secret. */
+  Result<bool> unlockTrade(const infra::Secret& pwdMd5);
   /** Subscribes to order/fill pushes for accounts; remembered and restored after reconnect. */
   Result<bool> subscribeAccountPush(const std::vector<std::uint64_t>& accIds);
   Result<PlacedOrder> placeOrder(const AccountHeader& header, const PlaceOrderRequest& request);

@@ -1,0 +1,52 @@
+# SIMULATE (paper) trading against a local OpenD. This is the default and the only mode that needs
+# no live gate. Every risk limit is mandatory: a missing one is a refused config, not "unlimited".
+# Money is whole HKD. Quote symbol codes (YAML would read 00700 as a number).
+mode: simulate
+
+opend:
+  host: "127.0.0.1"          # plaintext protocol: loopback only unless allow_non_loopback: true
+  port: 11111
+  request_timeout_ms: 5000
+
+account:
+  id: 123456                 # the SIMULATE account id from OpenD (Trd_GetAccList)
+  market: HK
+
+symbols:
+  - { code: "00700", lot: 100 }   # board lots differ per stock: check before adding one
+
+strategy:
+  name: meanrev
+  symbol: "00700"
+  qty: 100
+  window: 60
+  entry_z_x10: 20
+  exit_z_x10: 0
+
+risk:
+  max_position_notional_hkd: 50000
+  max_portfolio_notional_hkd: 200000
+  max_order_notional_hkd: 40000
+  max_daily_loss_hkd: 2000
+  max_open_orders: 5
+  concentration_limit: 1.0
+  price_band_bps: 200
+  max_quote_age_ms: 2000
+  allow_short: false
+
+rate:                         # OpenD allows ~15 order writes per 30 s per account
+  max_per_window: 15
+  window_ms: 30000
+  reserved_for_cancels: 5
+
+engine:
+  ring_capacity: 4096
+  max_quote_age_ms: 1000
+  reconcile_every_s: 30
+
+state:
+  dir: "var/futu_trader"      # WAL, persistent kill switch, kill-flag file (created 0700)
+
+metrics:
+  enabled: true
+  port: 9464                  # Prometheus scrape, bound to 127.0.0.1

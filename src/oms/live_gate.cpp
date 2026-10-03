@@ -105,40 +105,74 @@ std::string LiveGate::expectedPhrase(std::uint64_t accId) {
   return "I-ACCEPT-REAL-MONEY-" + digits;
 }
 
-Result<LiveApproval> LiveGate::approveReal(const LiveGateInput& in) {
-  const auto refuse = [](const std::string& why) {
-    return Error{ErrorCode::kInvalidArg, "REAL trading refused: " + why};
-  };
+namespace {
+
+// Every REAL gate except the startup reconciliation. Returns the refusal, or empty when all pass.
+std::string firstRefusalExceptReconcile(const LiveGateInput& in) {
   if (in.configuredAccId == 0) {
-    return refuse("no account id configured");
+    return "no account id configured";
   }
-  if (in.configPhrase != expectedPhrase(in.configuredAccId)) {
-    return refuse("config live_ack phrase missing or wrong");
+  if (in.configPhrase != LiveGate::expectedPhrase(in.configuredAccId)) {
+    return "config live_ack phrase missing or wrong";
   }
-  if (in.envVar != kEnvValue) {
-    return refuse("FUTU_LIVE_TRADING environment variable not set to the required value");
+  if (in.envVar != LiveGate::kEnvValue) {
+    return "FUTU_LIVE_TRADING environment variable not set to the required value";
   }
   if (!in.cliLiveFlag) {
-    return refuse("--live flag not given");
+    return "--live flag not given";
   }
   if (!promotionEligible(in.promotion, in.requiredCleanDays, in.today, in.maxGapDays,
                          in.maxStaleDays)) {
-    return refuse("promotion record does not show " + std::to_string(in.requiredCleanDays) +
-                  " recent consecutive clean SIMULATE days");
+    return "promotion record does not show " + std::to_string(in.requiredCleanDays) +
+           " recent consecutive clean SIMULATE days";
   }
   if (!in.tradeUnlocked) {
-    return refuse("trading has not been unlocked this session");
-  }
-  if (!in.startupReconcileClean) {
-    return refuse("startup reconciliation has not completed cleanly");
+    return "trading has not been unlocked this session";
   }
   const bool accountKnown = std::any_of(
       in.brokerAccounts.begin(), in.brokerAccounts.end(),
       [&](const auto& acc) { return acc.accId == in.configuredAccId && acc.env == TrdEnv::kReal; });
   if (!accountKnown) {
-    return refuse("configured account is not a REAL account reported by the broker");
+    return "configured account is not a REAL account reported by the broker";
   }
-  return LiveApproval(in.configuredAccId);
+  return {};
+}
+
+Error refuseReal(const std::string& why) {
+  return Error{ErrorCode::kInvalidArg, "REAL trading refused: " + why};
+}
+
+}  // namespace
+
+Result<PendingLiveApproval> LiveGate::approveRealPending(const LiveGateInput& in) {
+  const auto why = firstRefusalExceptReconcile(in);
+  if (!why.empty()) {
+    return refuseReal(why);
+  }
+  return PendingLiveApproval(in.configuredAccId);
+}
+
+Result<LiveApproval> LiveGate::confirm(const PendingLiveApproval& pending, bool reconcileClean) {
+  if (!reconcileClean) {
+    return refuseReal("startup reconciliation has not completed cleanly");
+  }
+  return LiveApproval(pending.accId());
+}
+
+Result<LiveApproval> LiveGate::approveReal(const LiveGateInput& in) {
+  const auto pending = approveRealPending(in);
+  if (!pending) {
+    return pending.error();
+  }
+  return confirm(pending.value(), in.startupReconcileClean);
+}
+
+Result<TradeTarget> TradeTarget::realReadOnly(const PendingLiveApproval& pending,
+                                              std::uint64_t accId, opend::TrdMarket market) {
+  if (pending.accId() != accId) {
+    return Error{ErrorCode::kInvalidArg, "live approval was issued for a different account"};
+  }
+  return TradeTarget(TrdEnv::kReal, accId, market, /*readOnly=*/true);
 }
 
 Result<TradeTarget> TradeTarget::real(const LiveApproval& approval, std::uint64_t accId,

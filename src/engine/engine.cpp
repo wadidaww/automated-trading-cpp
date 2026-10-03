@@ -67,7 +67,9 @@ Engine::Engine(oms::Oms& oms, strategy::IStrategy& strategy, const portfolio::Po
       kill_(killSwitch),
       config_(std::move(config)),
       context_(oms, book, clock, config_.seed),
-      ring_(config_.ringCapacity) {}
+      ring_(config_.ringCapacity) {
+  context_.setKeyPrefix(config_.intentPrefix);
+}
 
 Engine::~Engine() { stop(); }
 

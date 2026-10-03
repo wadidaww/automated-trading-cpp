@@ -36,6 +36,13 @@ class OmsContext final : public StrategyContext {
 
   /** Records the latest quote for a symbol and when we received it. Call before the strategy. */
   void observe(const QuoteEvent& quote);
+  /**
+   * Intent keys are "<prefix><n>". The counter restarts at zero in every process, so a live run
+   * must give each process a distinct prefix: otherwise its first keys collide with the intents
+   * restored from the write-ahead log and are wrongly refused as duplicates. (Backtests keep the
+   * default "S" so their journals, and golden hashes, do not change.)
+   */
+  void setKeyPrefix(std::string prefix) { keyPrefix_ = std::move(prefix); }
   void setSubmitObserver(SubmitObserver observer) { observer_ = std::move(observer); }
 
   std::int64_t nowNs() const override { return clock_.nowNs(); }
@@ -61,6 +68,7 @@ class OmsContext final : public StrategyContext {
   std::map<std::string, Seen> seen_;
   SubmitObserver observer_;
   std::uint64_t counter_{0};
+  std::string keyPrefix_{"S"};
 };
 
 }  // namespace futu_trader::strategy

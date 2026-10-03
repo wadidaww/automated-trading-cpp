@@ -4,6 +4,8 @@
   "builtin-baseline": "7f4f5f8f90dc1573df93e64d26f95ebae4fb92f0",
   "dependencies": [
     "gtest",
+    "yaml-cpp",
+    "openssl",
     "benchmark"
   ]
 }

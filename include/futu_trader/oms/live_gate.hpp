@@ -66,6 +66,22 @@ class LiveApproval {
   std::uint64_t accId_;
 };
 
+/**
+ * Every REAL gate except the startup reconciliation has passed. It exists because the startup
+ * reconciliation must READ the real account before the final gate can be satisfied: it can build
+ * only a read-only TradeTarget (TradeTarget::realReadOnly), which cannot place or cancel, and it
+ * becomes a LiveApproval only through LiveGate::confirm after that reconciliation came back clean.
+ */
+class PendingLiveApproval {
+ public:
+  std::uint64_t accId() const { return accId_; }
+
+ private:
+  friend class LiveGate;
+  explicit PendingLiveApproval(std::uint64_t accId) : accId_(accId) {}
+  std::uint64_t accId_;
+};
+
 class LiveGate {
  public:
   static constexpr const char* kEnvValue = "I_UNDERSTAND_REAL_MONEY";
@@ -74,6 +90,10 @@ class LiveGate {
 
   /** Every condition must hold; the error names the first one that does not. */
   static Result<LiveApproval> approveReal(const LiveGateInput& input);
+  /** Same checks, except `startupReconcileClean` is not required (and is ignored). */
+  static Result<PendingLiveApproval> approveRealPending(const LiveGateInput& input);
+  /** Completes a pending approval once the startup reconciliation has run. */
+  static Result<LiveApproval> confirm(const PendingLiveApproval& pending, bool reconcileClean);
 };
 
 /** Which account and environment orders are sent to. REAL requires a LiveApproval. */
@@ -85,6 +105,13 @@ class TradeTarget {
   /** Fails if the approval was issued for a different account. */
   static Result<TradeTarget> real(const LiveApproval& approval, std::uint64_t accId,
                                   opend::TrdMarket market);
+  /**
+   * A REAL target that can only read (OpenDVenue refuses place/cancel on it). Used for the startup
+   * reconciliation that must precede the final approval.
+   */
+  static Result<TradeTarget> realReadOnly(const PendingLiveApproval& pending, std::uint64_t accId,
+                                          opend::TrdMarket market);
+  bool readOnly() const { return readOnly_; }
 
   TrdEnv env() const { return env_; }
   std::uint64_t accId() const { return accId_; }
@@ -92,11 +119,12 @@ class TradeTarget {
   opend::AccountHeader header() const { return {env_, accId_, market_}; }
 
  private:
-  TradeTarget(TrdEnv env, std::uint64_t accId, opend::TrdMarket market)
-      : env_(env), accId_(accId), market_(market) {}
+  TradeTarget(TrdEnv env, std::uint64_t accId, opend::TrdMarket market, bool readOnly = false)
+      : env_(env), accId_(accId), market_(market), readOnly_(readOnly) {}
   TrdEnv env_;
   std::uint64_t accId_;
   opend::TrdMarket market_;
+  bool readOnly_{false};
 };
 
 }  // namespace futu_trader::oms

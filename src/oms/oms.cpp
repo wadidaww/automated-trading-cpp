@@ -7,6 +7,8 @@
 #include <map>
 #include <set>
 
+#include "futu_trader/oms/journal_codec.hpp"
+
 namespace futu_trader::oms {
 
 namespace {
@@ -14,6 +16,7 @@ namespace {
 __extension__ using Int128 = __int128;
 
 constexpr const char* kIdPrefix = "FT-";
+constexpr std::size_t kMaxIntentField = 256;  // the journal codec caps fields well above this
 constexpr std::int64_t kNsPerMs = 1'000'000;
 
 Money saturate(Int128 value) {
@@ -99,6 +102,8 @@ struct Oms::Impl {
   std::optional<Money> baselineCash;
   std::deque<JournalEntry> journalLog;
   std::function<void(const JournalEntry&)> sink;
+  std::function<Result<bool>(const DurableSubmit&)> durableSink;
+  OmsStats stats;
   // Set by any automatic trip; a thread that may talk to the venue then cancels everything.
   std::atomic<bool> haltRequested{false};
 
@@ -514,6 +519,42 @@ void Oms::setJournalSink(std::function<void(const JournalEntry&)> sink) {
   impl_->sink = std::move(sink);
 }
 
+void Oms::setDurableSubmitSink(std::function<Result<bool>(const DurableSubmit&)> sink) {
+  std::scoped_lock lock(impl_->mu);
+  impl_->durableSink = std::move(sink);
+}
+
+const OmsStats& Oms::stats() const { return impl_->stats; }
+
+std::size_t Oms::restoreIntents(const std::vector<DurableSubmit>& intents,
+                                std::int64_t notBeforeNs) {
+  auto& im = *impl_;
+  std::scoped_lock lock(im.mu);
+  std::size_t restored = 0;
+  for (const auto& logged : intents) {
+    if (logged.tsNs < notBeforeNs || !logged.clOrdId.starts_with(kIdPrefix) ||
+        logged.intentKey.empty() || logged.symbol.empty() || im.records.contains(logged.clOrdId)) {
+      continue;
+    }
+    OrderRecord rec;
+    rec.clOrdId = logged.clOrdId;
+    rec.intentKey = logged.intentKey;
+    rec.symbol = logged.symbol;
+    rec.side = logged.side;
+    rec.qty = logged.qty;
+    rec.priceMills = logged.priceMills;
+    rec.state = OmsState::kUnknown;   // it may or may not exist at the broker: reconcile decides
+    rec.sentAtNs = im.clock.nowNs();  // the grace period restarts now, not at the old send time
+    rec.detail = "restored from write-ahead log";
+    OrderRecord& stored = im.addRecord(std::move(rec));
+    im.intentIndex[logged.intentKey] = stored.clOrdId;
+    im.log(JournalKind::kAmbiguous, stored.clOrdId, "restored from write-ahead log after restart");
+    ++restored;
+  }
+  im.stats.restoredIntents.fetch_add(restored);
+  return restored;
+}
+
 Result<bool> Oms::bootstrap() {
   auto& im = *impl_;
   auto positions = im.venue.listPositions();
@@ -576,6 +617,11 @@ SubmitResult Oms::submit(const OrderIntent& intent, const QuoteContext& callerQu
     serviceHalt();  // finish any pending cancel-all before deciding anything else
   }
   SubmitResult result = submitInner(intent, callerQuote);
+  impl_->stats.submits[static_cast<std::size_t>(result.status)].fetch_add(1);
+  if (result.status == SubmitStatus::kRejectedByRisk) {
+    const auto reason = static_cast<std::size_t>(result.risk);
+    impl_->stats.riskRejects[std::min(reason, impl_->stats.riskRejects.size() - 1)].fetch_add(1);
+  }
   if (impl_->haltRequested.load()) {
     serviceHalt();  // this very call may have tripped a halt (loss limit, halt during place)
   }
@@ -591,11 +637,18 @@ SubmitResult Oms::submitInner(const OrderIntent& intent, const QuoteContext& cal
   order.quantity = intent.qty;
   order.limitPriceMinor = intent.priceMills;
   opend::PlaceOrderRequest request;
+  std::function<Result<bool>(const DurableSubmit&)> durable;
+  DurableSubmit durableRecord;
   {
     std::scoped_lock lock(im.mu);
     if (!im.bootstrapped) {
       out.status = SubmitStatus::kNotReady;
       out.detail = "bootstrap() has not completed";
+      return out;
+    }
+    if (intent.intentKey.size() > kMaxIntentField || intent.symbol.size() > kMaxIntentField) {
+      out.status = SubmitStatus::kInvalid;
+      out.detail = "intent key or symbol too long";
       return out;
     }
     if (intent.intentKey.empty() || intent.symbol.empty()) {
@@ -688,6 +741,30 @@ SubmitResult Oms::submitInner(const OrderIntent& intent, const QuoteContext& cal
     request.qty = intent.qty;
     request.priceMills = intent.priceMills;
     request.remark = stored.clOrdId;
+    durable = im.durableSink;
+    durableRecord = {stored.sentAtNs, stored.clOrdId, intent.intentKey, intent.symbol,
+                     intent.side,     intent.qty,     intent.priceMills};
+  }
+
+  // Write-ahead: the intent must be on disk before the order can exist at the broker. No lock held
+  // (an fdatasync can take milliseconds). If it cannot be made durable, nothing was sent, so this
+  // is a definite non-event: reject, release the key, and halt (the log is no longer trustworthy).
+  if (durable) {
+    const auto logged = durable(durableRecord);
+    if (!logged) {
+      im.stats.durableFailures.fetch_add(1);
+      std::scoped_lock lock(im.mu);
+      OrderRecord& rec = im.records.at(out.clOrdId);
+      if (rec.state == OmsState::kPendingSubmit) {
+        im.fire(rec, OmsEvent::kRejected, "write-ahead log failed");
+      }
+      rec.detail = "write-ahead log failed: " + logged.error().message;
+      im.intentIndex.erase(intent.intentKey);
+      im.autoTrip("write-ahead log failure");
+      out.status = SubmitStatus::kNotDurable;
+      out.detail = rec.detail;
+      return out;
+    }
   }
 
   // Network call with no lock held.
@@ -742,6 +819,29 @@ HaltReport Oms::haltAndCancelAll(const std::string& reason) {
     im.autoTrip(reason);
   }
   return im.runHalt(true);
+}
+
+HaltReport Oms::cancelAllLive() {
+  auto& im = *impl_;
+  HaltReport report;
+  std::vector<std::string> targets;
+  {
+    std::scoped_lock lock(im.mu);
+    for (const auto& [liveSeq, recPtr] : im.live) {
+      if (recPtr->venueOrderId == 0) {
+        ++report.unresolvedWithoutVenueId;
+      } else {
+        targets.push_back(recPtr->clOrdId);
+      }
+    }
+  }
+  for (const auto& id : targets) {
+    ++report.cancelRequested;
+    if (!im.cancelOrder(id, true)) {
+      ++report.cancelFailed;
+    }
+  }
+  return report;
 }
 
 void Oms::requestHalt(const std::string& reason) {

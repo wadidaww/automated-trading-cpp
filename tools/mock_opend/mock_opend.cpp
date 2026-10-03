@@ -12,6 +12,7 @@
 #include "Qot_RequestHistoryKL.pb.h"
 #include "Qot_Sub.pb.h"
 #include "Qot_UpdateBasicQot.pb.h"
+#include "Qot_UpdateOrderBook.pb.h"
 #include "Trd_GetAccList.pb.h"
 #include "Trd_GetFunds.pb.h"
 #include "Trd_GetOrderFillList.pb.h"
@@ -813,6 +814,31 @@ void MockOpenD::pushBasicQot(const std::string& code, double price) {
   const std::string body = push.SerializeAsString();
   const auto frame =
       op::encodeFrame(op::protoId::kQotUpdateBasicQot, 0,
+                      reinterpret_cast<const std::uint8_t*>(body.data()), body.size());
+  std::scoped_lock lock(impl_->mu);
+  for (auto& sock : impl_->sockets) {
+    Impl::writeAll(*sock, frame);
+  }
+}
+
+void MockOpenD::pushOrderBook(const std::string& code, double bid, std::int64_t bidVolume,
+                              double ask, std::int64_t askVolume) {
+  Qot_UpdateOrderBook::Response push;
+  push.set_rettype(Common::RetType_Succeed);
+  auto* s2c = push.mutable_s2c();
+  s2c->mutable_security()->set_market(1);
+  s2c->mutable_security()->set_code(code);
+  auto* b = s2c->add_orderbookbidlist();
+  b->set_price(bid);
+  b->set_volume(bidVolume);
+  b->set_oredercount(1);
+  auto* a = s2c->add_orderbookasklist();
+  a->set_price(ask);
+  a->set_volume(askVolume);
+  a->set_oredercount(1);
+  const std::string body = push.SerializeAsString();
+  const auto frame =
+      op::encodeFrame(op::protoId::kQotUpdateOrderBook, 0,
                       reinterpret_cast<const std::uint8_t*>(body.data()), body.size());
   std::scoped_lock lock(impl_->mu);
   for (auto& sock : impl_->sockets) {

@@ -105,6 +105,9 @@ class MockOpenD {
   // Actions.
   void dropAllConnections();                                 // server-side disconnect
   void pushBasicQot(const std::string& code, double price);  // to every connection
+  /** Top-of-book push (Qot_UpdateOrderBook) to every connection. */
+  void pushOrderBook(const std::string& code, double bid, std::int64_t bidVolume, double ask,
+                     std::int64_t askVolume);
 
   // Observations.
   std::size_t connectionCount() const;  // accepted so far

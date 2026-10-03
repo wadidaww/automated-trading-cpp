@@ -83,11 +83,13 @@ struct Env {
            "  max_order_notional_hkd: 50000\n  max_daily_loss_hkd: 5000\n  max_open_orders: 5\n"
            "  concentration_limit: 1.0\n  price_band_bps: 500\n  max_quote_age_ms: 5000\n"
            "  allow_short: false\nrate: { max_per_window: 15, window_ms: 30000, "
-           "reserved_for_cancels: 5 }\n"
-           "engine: { reconcile_every_s: 30 }\nstate: { dir: \"" +
-           (dir / "state").string() + "\" }\nmetrics: { enabled: true, port: 9464 }\n" +
+           "reserved_for_cancels: 5 }\n" +
+           (mode == "real" ? "engine: { reconcile_every_s: 30, cash_tolerance_hkd: 1000000 }\n"
+                           : "engine: { reconcile_every_s: 30 }\n") +
+           "state: { dir: \"" + (dir / "state").string() +
+           "\" }\nmetrics: { enabled: true, port: 9464 }\n" +
            (mode == "real" ? "live: { ack_phrase: I-ACCEPT-REAL-MONEY-222, promotion_log: " +
-                                 (dir / "promo").string() + " }\n"
+                                 (dir / "state" / "promo").string() + " }\n"
                            : "");
   }
   AppConfig config(const std::string& text) const {
@@ -255,8 +257,9 @@ TEST(Application, RealModeIsRefusedWithoutEachGateAndNeverPlacesAnOrder) {
   {
     std::ofstream(env.dir / "pwd") << "0123456789abcdef0123456789abcdef\n";
     ::chmod((env.dir / "pwd").c_str(), 0600);
-    std::ofstream(env.dir / "promo") << "2020-01-01 clean\n";  // stale and too short
-    ::chmod((env.dir / "promo").c_str(), 0600);
+    std::filesystem::create_directories(env.dir / "state");
+    std::ofstream(env.dir / "state" / "promo") << "2020-01-01 clean\n";  // stale and too short
+    ::chmod((env.dir / "state" / "promo").c_str(), 0600);
   }
   const auto cfg = env.config(env.yaml("real", 222));
   {
@@ -356,7 +359,9 @@ TEST(Application, CrashBetweenSendAndReplyDoesNotDuplicateTheOrderAfterRestart) 
   const auto metrics = httpGet(info.metricsPort, "/metrics");
   EXPECT_NE(metrics.find("futu_oms_restored_intents_total 1"), std::string::npos) << metrics;
   EXPECT_NE(metrics.find("futu_oms_unresolved_orders 0"), std::string::npos) << metrics;
-  EXPECT_NE(metrics.find("futu_oms_live_orders 1"), std::string::npos) << metrics;
+  // The first run's graceful stop reconciled, learned the lost-reply order's broker id and
+  // cancelled it, so the restored intent now matches a cancelled order, not a working one.
+  EXPECT_NE(metrics.find("futu_oms_live_orders 0"), std::string::npos) << metrics;
   second.finish();
   std::size_t withFirstRemark = 0;
   for (const auto& o : env.server.orders()) {
@@ -398,7 +403,7 @@ TEST(Ops, AlertRulesAndDashboardOnlyReferenceMetricsTheProcessExports) {
       }
       // Names that are not metrics: the job, rule groups, and a path mentioned in an annotation.
       if (name == "futu_trader" || name == "futu_trader_critical" ||
-          name == "futu_trader_warning" || name == "futu_proto") {
+          name == "futu_trader_warning" || name == "futu_trader_meta" || name == "futu_proto") {
         continue;
       }
       EXPECT_TRUE(exported.contains(name)) << file << " references unknown metric " << name;
@@ -439,14 +444,21 @@ TEST(Application, ACleanSimulateSessionRecordsACleanDayAndAHaltRecordsADirtyOne)
   auto cfg = env.config(env.yaml());
   cfg.live.promotionLog = promo.string();
   cfg.live.minSessionMinutes = 0;
+  std::string firstLog;
   {
     RunOptions options;
     options.today = "2026-10-01";
     Running run(cfg, options);
     run.ready.get_future().get();
+    ASSERT_TRUE(waitFor([&] {  // a clean day needs evidence the strategy actually ran
+      env.server.pushBasicQot("00700", 350.1);
+      env.server.pushOrderBook("00700", 350.0, 4000, 350.2, 2000);
+      return env.server.placeRequests() >= 1;
+    }));
     EXPECT_EQ(run.finish(), kExitOk) << run.log();
+    firstLog = run.log();
   }
-  EXPECT_EQ(readFile(promo), "2026-10-01 clean\n");
+  EXPECT_EQ(readFile(promo), "2026-10-01 clean\n") << firstLog;
   EXPECT_EQ(std::filesystem::status(promo).permissions() & std::filesystem::perms::others_read,
             std::filesystem::perms::none);
 
@@ -474,4 +486,101 @@ TEST(Application, AShortCleanSessionRecordsNothing) {
   EXPECT_EQ(run.finish(), kExitOk);
   EXPECT_FALSE(std::filesystem::exists(promo));
   EXPECT_NE(run.log().find("nothing recorded"), std::string::npos) << run.log();
+}
+
+TEST(Application, AnIdleSessionEarnsNoCleanDay) {
+  Env env;
+  const auto promo = env.dir / "promotion.log";
+  auto cfg = env.config(env.yaml());
+  cfg.live.promotionLog = promo.string();
+  cfg.live.minSessionMinutes = 0;
+  RunOptions options;
+  options.today = "2026-10-01";
+  Running run(cfg, options);
+  run.ready.get_future().get();
+  EXPECT_EQ(run.finish(), kExitOk);
+  EXPECT_FALSE(std::filesystem::exists(promo));
+}
+
+TEST(Application, WhenOpenDDiesWithAnOrderRestingTheExitSaysOrdersMayBeResting) {
+  Env env;
+  RunOptions options;
+  options.shutdownDeadlineMs = 400;
+  options.shutdownRetryMs = 50;
+  Running run(env.config(env.yaml()), options);
+  run.ready.get_future().get();
+  ASSERT_TRUE(waitFor([&] {
+    env.server.pushBasicQot("00700", 350.1);
+    env.server.pushOrderBook("00700", 350.0, 4000, 350.2, 2000);
+    return env.server.placeRequests() >= 1;
+  }));
+  ASSERT_EQ(env.server.orders().size(), 1U);
+  env.server.stop();  // the link drops with the order resting: every cancel will fail
+  EXPECT_EQ(run.finish(), kExitOrdersMayRest) << run.log();
+  EXPECT_NE(run.log().find("orders may still be resting"), std::string::npos) << run.log();
+  EXPECT_NE(run.log().find("failed"), std::string::npos);  // the failed cancels are in the log
+}
+
+TEST(Application, AHaltFileInTheStateDirRefusesStartup) {
+  Env env;
+  std::filesystem::create_directories(env.dir / "state");
+  { std::ofstream(env.dir / "state" / "HALT") << "stop"; }
+  std::string log;
+  EXPECT_EQ(runToCompletion(env.config(env.yaml()), {}, &log), kExitRefused);
+  EXPECT_NE(log.find("HALT"), std::string::npos) << log;
+  EXPECT_EQ(env.server.connectionCount(), 0U);
+}
+
+TEST(Application, RealModeRunsTheWholeGateTradesAndRelocksOnExit) {
+  Env env;
+  std::filesystem::create_directories(env.dir / "state");
+  ::chmod((env.dir / "state").c_str(), 0700);
+  {
+    std::ofstream(env.dir / "pwd") << "0123456789abcdef0123456789abcdef\n";
+    ::chmod((env.dir / "pwd").c_str(), 0600);
+    std::ofstream(env.dir / "state" / "promo") << "2026-09-26 clean\n2026-09-27 clean\n2026-09-28 "
+                                                  "clean\n2026-09-29 clean\n2026-09-30 clean\n";
+    ::chmod((env.dir / "state" / "promo").c_str(), 0600);
+  }
+  RunOptions options;
+  options.live = true;
+  options.liveEnv = "I_UNDERSTAND_REAL_MONEY";
+  options.today = "2026-10-01";
+  Running run(env.config(env.yaml("real", 222)), options);
+  run.ready.get_future().get();
+  ASSERT_TRUE(waitFor([&] {
+    env.server.pushBasicQot("00700", 350.1);
+    env.server.pushOrderBook("00700", 350.0, 4000, 350.2, 2000);
+    return env.server.placeRequests() >= 1;
+  })) << run.log();
+  ASSERT_EQ(env.server.orders().size(), 1U);
+  EXPECT_EQ(env.server.orders()[0].trdEnv, 1);  // REAL, stamped by the venue, only after the gate
+  EXPECT_EQ(env.server.orders()[0].accId, 222U);
+  EXPECT_EQ(env.server.unlockRequests(), 1U);
+  EXPECT_EQ(run.finish(), kExitOk) << run.log();
+  EXPECT_EQ(env.server.unlockRequests(), 2U);  // unlock + the relock on the way out
+}
+
+TEST(Application, EveryRealRefusalHappensBeforeTheAccountIsUnlocked) {
+  Env env;
+  std::filesystem::create_directories(env.dir / "state");
+  {
+    std::ofstream(env.dir / "pwd") << "0123456789abcdef0123456789abcdef\n";
+    ::chmod((env.dir / "pwd").c_str(), 0600);
+    std::ofstream(env.dir / "state" / "promo") << "2020-01-01 clean\n";
+    ::chmod((env.dir / "state" / "promo").c_str(), 0600);
+  }
+  const auto cfg = env.config(env.yaml("real", 222));
+  EXPECT_EQ(runToCompletion(cfg, {}), kExitRefused);  // no --live, no env var
+  RunOptions stale;
+  stale.live = true;
+  stale.liveEnv = "I_UNDERSTAND_REAL_MONEY";
+  stale.today = "2026-10-01";
+  EXPECT_EQ(runToCompletion(cfg, stale), kExitRefused);  // promotion record stale
+  RunOptions wrongEnv;
+  wrongEnv.live = true;
+  wrongEnv.liveEnv = "yes";
+  EXPECT_EQ(runToCompletion(cfg, wrongEnv), kExitRefused);
+  EXPECT_EQ(env.server.unlockRequests(), 0U);  // the password hash never left the process
+  EXPECT_EQ(env.server.placeRequests(), 0U);
 }

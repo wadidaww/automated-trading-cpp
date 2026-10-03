@@ -53,6 +53,11 @@ struct OmsConfig {
    * engine thread. Sized for a busy day; exceeding it still works, just with a growth hiccup.
    */
   std::size_t reserveOrders{50'000};
+  /**
+   * If true, submit() refuses (kNotDurable) unless a durable-submit sink is installed. A live
+   * process must set it: without the sink orders would go out with no write-ahead log.
+   */
+  bool requireDurable{false};
 };
 
 /** A strategy's request. `intentKey` is its idempotency key: one key never yields two orders. */
@@ -104,7 +109,10 @@ struct SubmitResult {
 };
 
 /** One order intent as written ahead of the send; see oms/journal_codec.hpp. */
-struct DurableSubmit;
+struct DurableSubmit;  // DurableSubmit::tsNs is whatever clock the SINK stamps; the OMS fills it
+                       // with its own (monotonic) clock, so a sink whose records outlive the
+                       // process must overwrite it with wall time, and restoreIntents(notBeforeNs)
+                       // compares in that same timebase (see src/app/application.cpp).
 
 /** Lock-free counters for metrics. Monotonic; read from any thread. */
 struct OmsStats {
@@ -113,6 +121,7 @@ struct OmsStats {
   std::array<std::atomic<std::uint64_t>, 32> riskRejects{};
   std::atomic<std::uint64_t> durableFailures{0};
   std::atomic<std::uint64_t> restoredIntents{0};
+  std::atomic<std::uint64_t> staleUpdates{0};  // late "working" pushes after the order moved on
 };
 
 enum class DriftKind : std::uint8_t {

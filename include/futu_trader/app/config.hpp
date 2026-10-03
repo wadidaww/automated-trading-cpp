@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -70,6 +71,8 @@ struct AppConfig {
     std::size_t ringCapacity{4096};
     std::int64_t maxQuoteAgeMs{1000};
     std::int64_t reconcileEverySec{30};
+    /** Largest tolerated gap between broker cash and our own cash accounting. Required for REAL. */
+    std::optional<Money> cashTolerance;
     bool busyPoll{false};
     int engineCpu{-1};
     int reconcilerCpu{-1};

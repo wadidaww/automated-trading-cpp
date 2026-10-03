@@ -41,31 +41,31 @@ class LossyVenue : public IVenue {
   Result<std::vector<opend::BrokerFill>> listFills() override {
     return std::vector<opend::BrokerFill>{};
   }
-  Result<std::vector<opend::PositionInfo>> listPositions() override {
-    return std::vector<opend::PositionInfo>{};
-  }
+  Result<std::vector<opend::PositionInfo>> listPositions() override { return positions; }
   Result<opend::FundsInfo> funds() override { return opend::FundsInfo{}; }
 
   bool reachBroker{true};
   bool loseReply{false};
   int placeCalls{0};
   std::uint64_t nextId{500};
+  std::vector<opend::PositionInfo> positions;
   std::vector<opend::BrokerOrder> orders;  // the "exchange": survives our restarts
 };
 
 // One process lifetime: everything that dies in a crash.
 struct Process {
-  Process(LossyVenue& v, ManualClock& c, const std::string& epoch)
+  Process(LossyVenue& v, ManualClock& c, const std::string& epoch, bool requireDurable = false)
       : venue(v),
         clock(c),
         rate({.maxPerWindow = 100, .windowMs = 30'000, .reservedForCancels = 10}, clock),
         risk(limits(), pre(), kill, instruments),
-        oms(venue, risk, rate, kill, book, clock, config(epoch)) {
+        oms(venue, risk, rate, kill, book, clock, config(epoch, requireDurable)) {
     instruments.add({"00700", 100});
   }
-  static OmsConfig config(const std::string& epoch) {
+  static OmsConfig config(const std::string& epoch, bool requireDurable = false) {
     OmsConfig cfg;
     cfg.sessionEpoch = epoch;
+    cfg.requireDurable = requireDurable;
     cfg.reserveOrders = 100;
     return cfg;
   }
@@ -392,4 +392,53 @@ TEST(MetricsBindings, EngineAndWalMetricsRender) {
   EXPECT_NE(text.find("futu_wal_records_total 1"), std::string::npos);
   EXPECT_NE(text.find("futu_wal_failed 0"), std::string::npos);
   EXPECT_NE(text.find("futu_wal_sync_seconds_count"), std::string::npos);
+}
+
+TEST(OmsDurable, RequireDurableRefusesToSendWhenNoSinkIsInstalled) {
+  ManualClock clock;
+  LossyVenue venue;
+  Process p(venue, clock, "A", /*requireDurable=*/true);
+  ASSERT_TRUE(p.oms.bootstrap().ok());
+  const auto result = p.oms.submit(buy("k1"), p.quote());
+  EXPECT_EQ(result.status, SubmitStatus::kNotDurable);
+  EXPECT_EQ(venue.placeCalls, 0);
+  p.oms.setDurableSubmitSink([](const DurableSubmit&) -> Result<bool> { return true; });
+  EXPECT_EQ(p.oms.submit(buy("k2"), p.quote()).status, SubmitStatus::kAccepted);
+}
+
+TEST(OmsDurable, AnUnresolvedOrderBlocksNewExposureButNeverARiskReducingOrder) {
+  ManualClock clock;
+  LossyVenue venue;
+  venue.positions = {{"00700", 200, 200, 340'000, 350'000}};
+  Process p(venue, clock, "A");
+  ASSERT_TRUE(p.oms.bootstrap().ok());
+  venue.reachBroker = false;
+  const OrderIntent sellOne{"k1", "00700", Side::kSell, 100, 350'000};
+  ASSERT_EQ(p.oms.submit(sellOne, p.quote()).status, SubmitStatus::kAmbiguous);
+  const auto more = p.oms.submit(buy("k2"), p.quote());  // adds exposure: blocked
+  EXPECT_EQ(more.status, SubmitStatus::kRejectedByRisk);
+  EXPECT_EQ(more.risk, RiskReject::kUnresolvedOrder);
+  const int placesBefore = venue.placeCalls;
+  const OrderIntent sellTwo{"k3", "00700", Side::kSell, 100, 350'000};  // still within the holding
+  const auto reduce = p.oms.submit(sellTwo, p.quote());
+  EXPECT_NE(reduce.status, SubmitStatus::kRejectedByRisk) << reduce.detail;
+  EXPECT_EQ(venue.placeCalls, placesBefore + 1);  // it reached the venue
+}
+
+TEST(OmsShutdown, CancelAllLiveLeavesAHumansManualOrdersAlone) {
+  ManualClock clock;
+  LossyVenue venue;
+  opend::BrokerOrder manual;
+  manual.orderId = 42;
+  manual.code = "00700";
+  manual.qty = 100;
+  manual.priceMills = 349'000;
+  manual.status = 5;
+  manual.remark = "typed-by-a-human";
+  venue.orders.push_back(manual);
+  Process p(venue, clock, "A");
+  ASSERT_TRUE(p.oms.bootstrap().ok());
+  ASSERT_EQ(p.oms.submit(buy("k1"), p.quote()).status, SubmitStatus::kAccepted);
+  const auto report = p.oms.cancelAllLive();
+  EXPECT_EQ(report.cancelRequested, 1U);  // ours only
 }

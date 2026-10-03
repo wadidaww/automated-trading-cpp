@@ -16,6 +16,8 @@ enum ExitCode : std::uint8_t {
   kExitRefused = 3,  // a safety condition refused startup (kill switch, live gate, corrupt WAL...)
   kExitConnect = 4,  // OpenD unreachable or the broker rejected a startup step
   kExitHalted = 6,   // trading halted while running (kill switch tripped); orders were cancelled
+  // Stopped or halted but cancels did not all succeed before the deadline: orders MAY BE RESTING.
+  kExitOrdersMayRest = 7,
 };
 
 struct RunningInfo {
@@ -31,6 +33,10 @@ struct RunOptions {
   std::function<void(const std::string&)> log;        // default: stderr with a timestamp
   std::function<void(const RunningInfo&)> onRunning;  // called once the engine is trading
   std::int64_t pollIntervalMs{100};
+  /** How long a stop or halt keeps retrying cancels (and reconciling) before giving up with exit 7.
+   */
+  std::int64_t shutdownDeadlineMs{20'000};
+  std::int64_t shutdownRetryMs{500};
 };
 
 /**

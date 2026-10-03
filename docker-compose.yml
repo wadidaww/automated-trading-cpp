@@ -18,6 +18,7 @@ services:
       - ./etc:/etc/futu_trader:ro     # trader.yaml and secret files (chmod 600, uid 10001)
       - futu-state:/var/lib/futu_trader
     restart: "no"                  # a halt or refusal needs a human, not a restart loop
+    stop_grace_period: 90s         # graceful stop retries cancels for up to ~20 s; Docker's default 10 s would SIGKILL it
 
   prometheus:
     image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
@@ -25,6 +26,13 @@ services:
     volumes:
       - ./ops/prometheus:/etc/prometheus:ro
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.listen-address=127.0.0.1:9090"]
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    network_mode: host
+    volumes:
+      - ./ops/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--web.listen-address=127.0.0.1:9093"]
 
   grafana:
     image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572

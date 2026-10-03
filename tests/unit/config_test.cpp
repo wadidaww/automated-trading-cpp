@@ -1,7 +1,10 @@
 #include "futu_trader/app/config.hpp"
 
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <regex>
 
@@ -120,18 +123,28 @@ TEST(Config, ModeMustBeExplicitAndSimulateOrReal) {
   expectRefused(replace(kValid, "mode: simulate\n", ""), "mode");
 }
 
-TEST(Config, RealModeNeedsItsSecretAndTheLiveSection) {
+TEST(Config, RealModeNeedsItsSecretCashToleranceAndTheLiveSection) {
   const std::string real = replace(kValid, "mode: simulate", "mode: real");
   expectRefused(real, "trade_password_md5_file");
   const std::string withSecret =
       replace(real, "symbols:", "secrets: { trade_password_md5_file: /tmp/x }\nsymbols:");
-  expectRefused(withSecret, "live.ack_phrase");
-  const auto ok = parseConfig(withSecret + "live: { ack_phrase: a, promotion_log: /tmp/p }\n");
+  expectRefused(withSecret, "cash_tolerance_hkd");
+  const std::string withCash =
+      replace(withSecret, "state: { dir: \"var/x\" }",
+              "engine: { cash_tolerance_hkd: 100 }\nstate: { dir: \"var/x\" }");
+  expectRefused(withCash, "live.ack_phrase");
+  const auto ok = parseConfig(withCash + "live: { ack_phrase: a, promotion_log: var/x/promo }\n");
   ASSERT_TRUE(ok.ok()) << ok.error().message;
   EXPECT_EQ(ok.value().mode, Mode::kReal);
+  EXPECT_EQ(*ok.value().engine.cashTolerance, 100'000);
   expectRefused(
-      withSecret + "live: { ack_phrase: a, promotion_log: /tmp/p, required_clean_days: 1 }\n",
+      withCash + "live: { ack_phrase: a, promotion_log: var/x/promo, required_clean_days: 1 }\n",
       "required_clean_days");
+  expectRefused(withCash + "live: { ack_phrase: a, promotion_log: /tmp/elsewhere/promo }\n",
+                "inside 'state.dir'");
+  expectRefused(
+      withCash + "live: { ack_phrase: a, promotion_log: var/x/promo, min_session_minutes: 5 }\n",
+      "min_session_minutes");
 }
 
 TEST(Config, SymbolsAreValidatedAndTheStrategyMustTradeOneOfThem) {
@@ -166,4 +179,32 @@ TEST(Config, ShippedExampleConfigsParse) {
   ASSERT_TRUE(live.ok()) << live.error().message;
   EXPECT_EQ(live.value().mode, Mode::kReal);
   EXPECT_FALSE(loadConfigFile("/nonexistent/x.yaml").ok());
+}
+
+TEST(Config, HostileNumbersAreBoundedBeforeTheyCanOverflowOrDisableACheck) {
+  expectRefused(replace(kValid, "window_ms: 30000", "window_ms: 9000000000000000"), "window_ms");
+  expectRefused(replace(kValid, "max_quote_age_ms: 2000", "max_quote_age_ms: 9000000000000"),
+                "max_quote_age_ms");
+  expectRefused(replace(kValid, "max_per_window: 15", "max_per_window: 100000"), "max_per_window");
+  expectRefused(replace(kValid, "state: { dir: \"var/x\" }",
+                        "engine: { max_quote_age_ms: 0 }\nstate: { dir: \"var/x\" }"),
+                "engine.max_quote_age_ms");
+  expectRefused(replace(kValid, "state: { dir: \"var/x\" }",
+                        "engine: { reconcile_every_s: 9000000000000 }\nstate: { dir: \"var/x\" }"),
+                "reconcile_every_s");
+  expectRefused(replace(kValid, "qty: 200 }", "qty: 200, cancel_after_quotes: -5 }"),
+                "cancel_after_quotes");
+  expectRefused(replace(kValid, "qty: 200 }", "qty: 200, entry_z_x10: 0 }"), "entry_z_x10");
+}
+
+TEST(Config, ARiskConfigThatOthersCanWriteIsRefused) {
+  const auto path = std::filesystem::temp_directory_path() / "futu_cfg_perm.yaml";
+  { std::ofstream(path) << kValid; }
+  ::chmod(path.c_str(), 0600);
+  EXPECT_TRUE(loadConfigFile(path.string()).ok());
+  ::chmod(path.c_str(), 0666);
+  const auto loose = loadConfigFile(path.string());
+  ASSERT_FALSE(loose.ok());
+  EXPECT_NE(loose.error().message.find("writable"), std::string::npos);
+  std::filesystem::remove(path);
 }

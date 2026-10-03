@@ -120,3 +120,10 @@ TEST(Hardening, DisablesCoreDumpsAndDumpable) {
   ASSERT_TRUE(WIFEXITED(status));
   EXPECT_EQ(WEXITSTATUS(status), 0);
 }
+
+TEST(SecretFile, AFifoAtThePathIsRefusedInsteadOfHangingTheProcess) {
+  TempDir dir;
+  const auto fifo = (dir.path / "fifo").string();
+  ASSERT_EQ(::mkfifo(fifo.c_str(), 0600), 0);
+  EXPECT_FALSE(readSecretFile(fifo).ok());  // would block forever on open() without O_NONBLOCK
+}

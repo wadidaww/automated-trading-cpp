@@ -1,6 +1,8 @@
 #include "futu_trader/infra/wal.hpp"
 
 #include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <array>
@@ -41,18 +43,70 @@ std::uint64_t nowNs() {
                                         .count());
 }
 
+// Validates that bytes after `validBytes` are a genuine torn tail and saves them aside. Returns an
+// error (and changes nothing) if they could hide an intact record.
+Result<bool> tornTailCheck(const std::string& path, std::uint64_t validBytes) {
+  std::ifstream in(path, std::ios::binary);
+  in.seekg(0, std::ios::end);
+  const auto total = static_cast<std::uint64_t>(in.tellg());
+  if (total < validBytes) {
+    return Error{ErrorCode::kProtocol, "WAL '" + path + "' shrank while being read"};
+  }
+  const std::uint64_t tailSize = total - validBytes;
+  // One record is at most 8 bytes of framing plus kMaxWalRecordBytes; more cannot be one torn
+  // write.
+  if (tailSize > kMaxWalRecordBytes + 8) {
+    return Error{ErrorCode::kProtocol,
+                 "WAL '" + path + "' has " + std::to_string(tailSize) +
+                     " unreadable bytes after its last good record: not a torn tail; refusing. "
+                     "Inspect it and move it aside deliberately."};
+  }
+  std::string tail(tailSize, '\0');
+  in.seekg(static_cast<std::streamoff>(validBytes));
+  in.read(tail.data(), static_cast<std::streamsize>(tailSize));
+  const auto* bytes = reinterpret_cast<const std::uint8_t*>(tail.data());
+  for (std::uint64_t i = 0; i + 8 <= tailSize; ++i) {
+    const std::uint32_t len = get32(bytes + i);
+    if (len <= kMaxWalRecordBytes && i + 8 + len <= tailSize &&
+        data::crc32(bytes + i + 4, len) == get32(bytes + i + 4 + len)) {
+      return Error{ErrorCode::kProtocol,
+                   "WAL '" + path +
+                       "' has an intact record after damage (mid-file corruption, not a torn "
+                       "tail); refusing. Inspect it and move it aside deliberately."};
+    }
+  }
+  if (tailSize > 0) {
+    const std::string savedPath = path + ".torn-" + std::to_string(validBytes);
+    {
+      std::ofstream saved(savedPath, std::ios::binary);
+      saved.write(tail.data(), static_cast<std::streamsize>(tailSize));
+    }
+    ::chmod(savedPath.c_str(), 0600);
+  }
+  return true;
+}
+
 }  // namespace
 
 Wal::Wal(WalConfig config, int fd) : config_(std::move(config)), fd_(fd) {}
 
 Result<std::unique_ptr<Wal>> Wal::open(const WalConfig& config) {
   // O_APPEND: every write lands at the end even if something else touches the file offset.
-  const int fd = ::open(config.path.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
+  const int fd =
+      ::open(config.path.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
   if (fd < 0) {
     return Error{ErrorCode::kDisconnected,
                  "cannot open WAL '" + config.path + "': " + std::strerror(errno)};
   }
-  std::unique_ptr<Wal> wal(new Wal(config, fd));
+  std::unique_ptr<Wal> wal(new Wal(config, fd));  // owns fd from here: closed on every return
+  // One writer per log, enforced by the kernel for the life of the descriptor. A second process on
+  // the same state dir would have its own OMS and risk state (so limits no longer bound total
+  // exposure) and could cut a record the first is mid-way through writing.
+  if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
+    return Error{
+        ErrorCode::kInvalidArg,
+        "WAL '" + config.path + "' is locked: another futu_trader is using this state dir"};
+  }
   off_t size = ::lseek(fd, 0, SEEK_END);
   if (size > 0) {
     if (size < 8) {
@@ -64,6 +118,13 @@ Result<std::unique_ptr<Wal>> Wal::open(const WalConfig& config) {
     } else {
       const auto existing = readWal(config.path);
       if (existing.status == WalStatus::kTruncated) {
+        // A real torn tail is less than one record long and holds no intact record. Anything else
+        // (a corrupted length in the MIDDLE looks identical to "runs past the end") means good
+        // records would be destroyed: refuse. The cut bytes are kept for the post-mortem.
+        const auto cut = tornTailCheck(config.path, existing.validBytes);
+        if (!cut) {
+          return cut.error();
+        }
         if (::ftruncate(fd, static_cast<off_t>(existing.validBytes)) != 0 || ::fdatasync(fd) != 0) {
           return Error{ErrorCode::kDisconnected, "cannot cut torn tail off '" + config.path + "'"};
         }
@@ -225,7 +286,12 @@ void Wal::run() {
           stats_.writeErrors.fetch_add(1, std::memory_order_relaxed);
         }
       } else if (!bytes.empty()) {
-        (void)syncFile();  // async-only batch: still sync, but a failure is reported on next use
+        // Async-only batch: still sync. A failed fdatasync can lose dirty pages while the next one
+        // reports success, so a failure poisons the log for good rather than being forgotten.
+        if (!syncFile()) {
+          failed_.store(true);
+          stats_.writeErrors.fetch_add(1, std::memory_order_relaxed);
+        }
       }
     }
     for (Item& item : batch) {

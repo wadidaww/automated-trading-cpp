@@ -45,6 +45,10 @@ Result<std::optional<QuoteEvent>> QuoteAssembler::onFrame(const Frame& frame, st
         }
         last = price.value();
       }
+      if (!allowed_.empty() && !allowed_.contains(quote.security().code())) {
+        ++ignoredUnsubscribed_;
+        continue;
+      }
       updates[quote.security().code()] = last;
     }
     for (const auto& [code, last] : updates) {
@@ -61,6 +65,10 @@ Result<std::optional<QuoteEvent>> QuoteAssembler::onFrame(const Frame& frame, st
     const auto& s2c = rsp.value().s2c();
     if (s2c.security().market() != kQotMarketHkSecurity) {
       ++ignoredNonHk_;
+      return Out{};
+    }
+    if (!allowed_.empty() && !allowed_.contains(s2c.security().code())) {
+      ++ignoredUnsubscribed_;
       return Out{};
     }
     if (s2c.orderbookasklist_size() == 0 || s2c.orderbookbidlist_size() == 0) {

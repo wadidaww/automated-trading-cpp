@@ -93,6 +93,9 @@ Result<bool> registerOmsMetrics(MetricsRegistry& registry, oms::Oms& oms,
             [&oms] { return oms.stats().durableFailures.load(); });
   r.counter("futu_oms_restored_intents_total", "Order intents restored from the log at startup.",
             [&oms] { return oms.stats().restoredIntents.load(); });
+  r.counter("futu_oms_stale_updates_total",
+            "Late 'working' pushes after the order moved on (benign).",
+            [&oms] { return oms.stats().staleUpdates.load(); });
   r.counter("futu_oms_anomalies_total", "Illegal transitions and other OMS anomalies.",
             [&oms] { return static_cast<std::uint64_t>(oms.anomalyCount()); });
   r.gauge("futu_oms_live_orders", "Orders currently live at the broker.",
@@ -103,6 +106,9 @@ Result<bool> registerOmsMetrics(MetricsRegistry& registry, oms::Oms& oms,
           [&oms] { return oms.haltPending() ? 1.0 : 0.0; });
   r.gauge("futu_kill_switch_tripped", "1 if the kill switch is tripped (trading blocked).",
           [&kill] { return kill.tripped() ? 1.0 : 0.0; });
+  r.gauge("futu_kill_switch_persist_failed",
+          "1 if a kill-switch trip could not be written to disk (a restart would not be blocked).",
+          [&kill] { return kill.persistFailed() ? 1.0 : 0.0; });
   r.gauge("futu_rate_limit_utilization", "Fraction of the order-rate window budget in use.",
           [&rate] { return rate.utilization(); });
   return r.status;

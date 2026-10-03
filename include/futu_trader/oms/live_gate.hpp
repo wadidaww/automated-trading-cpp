@@ -116,7 +116,7 @@ class TradeTarget {
   TrdEnv env() const { return env_; }
   std::uint64_t accId() const { return accId_; }
   opend::TrdMarket market() const { return market_; }
-  opend::AccountHeader header() const { return {env_, accId_, market_}; }
+  opend::AccountHeader header() const { return {env_, accId_, market_, readOnly_}; }
 
  private:
   TradeTarget(TrdEnv env, std::uint64_t accId, opend::TrdMarket market, bool readOnly = false)

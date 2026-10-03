@@ -7,10 +7,12 @@
 # FUTU_LIVE_TRADING environment variable. Never put those in this file.
 [Unit]
 Description=futu_trader automated trading (Futu OpenD)
-After=network-online.target
-Wants=network-online.target
-# Exit 3 (a safety condition refused to start), 2 (bad config) and 6 (halted while running) must
-# never be retried automatically: a human has to look first.
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+# Exit 3 (a safety condition refused to start), 2 (bad config), 6 (halted while running) and 7
+# (stopped but orders may be resting) must never be retried automatically: a human has to look first.
+# If OpenD is slow after a reboot the start limit below can leave the unit "failed":
+# `systemctl reset-failed futu-trader` once OpenD is up.
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -21,10 +23,13 @@ Group=futu
 ExecStart=/opt/futu_trader/bin/futu_trader --config /etc/futu_trader/trader.yaml
 Restart=on-failure
 RestartSec=10
-RestartPreventExitStatus=2 3 6
-# SIGTERM -> graceful stop (cancels resting orders); give it time to talk to the broker.
+RestartPreventExitStatus=2 3 6 7
+# SIGTERM -> graceful stop: finish the quote in flight (up to the 5 s request timeout), drain the
+# ring, then retry cancels for up to 20 s. A SIGKILL in the middle leaves orders resting, so be generous.
 KillSignal=SIGTERM
-TimeoutStopSec=30
+TimeoutStopSec=90
+# For REAL trading, make the drop-in say Restart=no: a crash must not silently resume trading. (After
+# a restart, resting orders from before the crash are adopted at bootstrap and left resting.)
 
 # Isolation
 NoNewPrivileges=yes
@@ -49,6 +54,8 @@ RemoveIPC=yes
 UMask=0077
 CapabilityBoundingSet=
 AmbientCapabilities=
+StateDirectory=futu_trader
+StateDirectoryMode=0700
 ReadWritePaths=/var/lib/futu_trader
 ReadOnlyPaths=/etc/futu_trader
 

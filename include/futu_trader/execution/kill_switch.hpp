@@ -23,6 +23,8 @@ class KillSwitch {
 
   void trip(const std::string& reason);
   bool tripped() const { return tripped_.load(std::memory_order_acquire); }
+  /** True if a trip could not be written to disk (a restart would not be blocked). */
+  bool persistFailed() const { return persistFailed_.load(std::memory_order_acquire); }
   std::string reason() const;
 
   /**
@@ -41,6 +43,7 @@ class KillSwitch {
 
  private:
   std::atomic<bool> tripped_{false};
+  std::atomic<bool> persistFailed_{false};
   mutable std::mutex mu_;
   std::string reason_;
   std::string resetBy_;

@@ -230,7 +230,14 @@ struct Oms::Impl {
     const OmsState before = rec.state;
     const auto next = transition(rec.state, *event);
     if (!next) {
-      // Stale or duplicate update (e.g. "working" arriving after "partially filled"): ignore.
+      if (*event == OmsEvent::kAcked) {
+        // A late "working" after we already moved on (cancel requested, partly filled...) is just a
+        // push that overtook nothing: normal at a real gateway, so it is counted but is not an
+        // anomaly.
+        stats.staleUpdates.fetch_add(1);
+        return false;
+      }
+      // Any other update that cannot apply (e.g. "cancelled" while filled) is a real inconsistency.
       anomaly(rec.clOrdId,
               std::string("ignored ") + toString(*observed) + " while " + toString(rec.state));
       return false;
@@ -686,8 +693,10 @@ SubmitResult Oms::submitInner(const OrderIntent& intent, const QuoteContext& cal
                           (held < 0 && intent.side == Side::kBuy && intent.qty <= -held);
     Impl::RiskView view = im.riskView(intent);
     RiskReject verdict = RiskReject::kOk;
-    if (im.symbolHasUnresolved(intent.symbol)) {
-      verdict = RiskReject::kUnresolvedOrder;  // don't stack orders on an unknown outcome
+    if (im.symbolHasUnresolved(intent.symbol) && !reducing) {
+      // Don't stack exposure on an unknown outcome. A risk-reducing order is exempt (rule 12:
+      // flattening must always be possible), e.g. right after a restart restored unknown intents.
+      verdict = RiskReject::kUnresolvedOrder;
     } else if (im.wouldSelfTrade(intent)) {
       verdict = RiskReject::kSelfTrade;
     } else if (view.marksStale && !reducing) {
@@ -742,6 +751,14 @@ SubmitResult Oms::submitInner(const OrderIntent& intent, const QuoteContext& cal
     request.priceMills = intent.priceMills;
     request.remark = stored.clOrdId;
     durable = im.durableSink;
+    if (!durable && im.config.requireDurable) {
+      // Fail closed: this process was told it must write ahead, and nobody installed the sink.
+      im.fire(stored, OmsEvent::kRejected, "no write-ahead sink installed");
+      im.intentIndex.erase(intent.intentKey);
+      out.status = SubmitStatus::kNotDurable;
+      out.detail = "write-ahead sink required but not installed";
+      return out;
+    }
     durableRecord = {stored.sentAtNs, stored.clOrdId, intent.intentKey, intent.symbol,
                      intent.side,     intent.qty,     intent.priceMills};
   }
@@ -828,6 +845,9 @@ HaltReport Oms::cancelAllLive() {
   {
     std::scoped_lock lock(im.mu);
     for (const auto& [liveSeq, recPtr] : im.live) {
+      if (recPtr->external) {
+        continue;  // a planned stop must not cancel a human's manual orders (a halt still does)
+      }
       if (recPtr->venueOrderId == 0) {
         ++report.unresolvedWithoutVenueId;
       } else {

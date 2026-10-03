@@ -250,3 +250,31 @@ TEST(MetricsServer, ABusyPortIsReportedNotSilentlyIgnored) {
   MetricsServer second(registry, nullptr, cfg);
   EXPECT_FALSE(second.start().ok());
 }
+
+TEST_F(ServerFixture, AFloodOfIdleConnectionsIsShedAndTheServerKeepsServingAfterwards) {
+  std::vector<int> idle;
+  for (int i = 0; i < 80; ++i) {  // far above the session cap; none ever sends a request
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    ::inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+      idle.push_back(fd);
+    } else {
+      ::close(fd);
+    }
+  }
+  for (const int fd : idle) {
+    ::close(fd);
+  }
+  // Once the flood is gone (or its sessions have timed out) the endpoint must answer again.
+  bool answered = false;
+  for (int attempt = 0; attempt < 50 && !answered; ++attempt) {
+    answered = contains(get(port, "/healthz"), "200 OK");
+    if (!answered) {
+      std::this_thread::sleep_for(20ms);
+    }
+  }
+  EXPECT_TRUE(answered);
+}

@@ -22,7 +22,12 @@ std::string response(int code, const std::string& reason, const std::string& bod
 
 struct MetricsServer::Impl : std::enable_shared_from_this<MetricsServer::Impl> {
   Impl(const MetricsRegistry& r, ReadyFn rd, MetricsServerConfig c)
-      : registry(r), ready(std::move(rd)), config(c), acceptor(io) {}
+      : registry(r), ready(std::move(rd)), config(c), acceptor(io), retryTimer(io) {}
+
+  // Concurrent sessions are capped: every one holds a file descriptor of a process that also needs
+  // descriptors for the WAL and the OpenD link. Only touched from the io thread.
+  static constexpr int kMaxSessions = 16;
+  int activeSessions{0};
 
   // One connection: read headers (bounded, with a deadline), answer, close.
   struct Session : std::enable_shared_from_this<Session> {
@@ -30,6 +35,8 @@ struct MetricsServer::Impl : std::enable_shared_from_this<MetricsServer::Impl> {
         : owner(o), socket(io), timer(io), buffer(o.config.maxRequestBytes) {}
 
     void begin() {
+      ++owner.activeSessions;
+      counted = true;
       timer.expires_after(owner.config.readTimeout);
       auto self = shared_from_this();
       timer.async_wait([self](const boost::system::error_code& ec) {
@@ -77,12 +84,24 @@ struct MetricsServer::Impl : std::enable_shared_from_this<MetricsServer::Impl> {
     void reply(std::string text) {
       auto data = std::make_shared<std::string>(std::move(text));
       auto self = shared_from_this();
+      // A client that never reads the answer must not hold the descriptor forever.
+      timer.expires_after(owner.config.readTimeout);
+      timer.async_wait([self](const boost::system::error_code& ec) {
+        if (!ec) {
+          self->closeNow();
+        }
+      });
       asio::async_write(
           socket, asio::buffer(*data),
           [self, data](const boost::system::error_code&, std::size_t) { self->closeNow(); });
     }
 
     void closeNow() {
+      if (counted) {
+        counted = false;
+        --owner.activeSessions;
+      }
+      timer.cancel();
       boost::system::error_code ignored;
       ignored = socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignored);
       ignored = socket.close(ignored);
@@ -92,15 +111,30 @@ struct MetricsServer::Impl : std::enable_shared_from_this<MetricsServer::Impl> {
     asio::ip::tcp::socket socket;
     asio::steady_timer timer;
     asio::streambuf buffer;
+    bool counted{false};
   };
 
   void accept() {
     auto session = std::make_shared<Session>(*this, io);
     acceptor.async_accept(session->socket, [this, session](const boost::system::error_code& ec) {
-      if (ec) {
+      if (ec == asio::error::operation_aborted) {
         return;  // acceptor closed on stop()
       }
-      session->begin();
+      if (ec) {
+        // EMFILE/ENFILE/ECONNABORTED...: never stop serving for good. Try again shortly.
+        retryTimer.expires_after(std::chrono::milliseconds(50));
+        retryTimer.async_wait([this](const boost::system::error_code& waitEc) {
+          if (!waitEc) {
+            accept();
+          }
+        });
+        return;
+      }
+      if (activeSessions >= kMaxSessions) {
+        session->closeNow();  // shed load instead of exhausting descriptors
+      } else {
+        session->begin();
+      }
       accept();
     });
   }
@@ -110,6 +144,7 @@ struct MetricsServer::Impl : std::enable_shared_from_this<MetricsServer::Impl> {
   MetricsServerConfig config;
   asio::io_context io;
   asio::ip::tcp::acceptor acceptor;
+  asio::steady_timer retryTimer;
   std::thread thread;
   bool running{false};
 };
@@ -162,6 +197,7 @@ void MetricsServer::stop() {
   asio::post(im.io, [&im] {
     boost::system::error_code ignored;
     ignored = im.acceptor.close(ignored);
+    im.retryTimer.cancel();
   });
   im.io.stop();
   if (im.thread.joinable()) {

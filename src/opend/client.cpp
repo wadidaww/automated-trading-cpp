@@ -350,6 +350,9 @@ Result<bool> OpenDClient::subscribeAccountPush(const std::vector<std::uint64_t>&
 
 Result<PlacedOrder> OpenDClient::placeOrder(const AccountHeader& header,
                                             const PlaceOrderRequest& request) {
+  if (header.readOnly()) {
+    return Error{ErrorCode::kInvalidArg, "read-only account header cannot write"};
+  }
   if (request.qty <= 0 || request.priceMills <= 0 || request.code.empty()) {
     return Error{ErrorCode::kInvalidArg, "invalid order request"};
   }
@@ -393,6 +396,9 @@ Result<bool> sendModify(OpenDConnection& conn, Trd_ModifyOrder::Request& req) {
 }  // namespace
 
 Result<bool> OpenDClient::cancelOrder(const AccountHeader& header, std::uint64_t orderId) {
+  if (header.readOnly()) {
+    return Error{ErrorCode::kInvalidArg, "read-only account header cannot write"};
+  }
   Trd_ModifyOrder::Request req;
   auto* c2s = req.mutable_c2s();
   fillPacketId(c2s->mutable_packetid());
@@ -404,6 +410,9 @@ Result<bool> OpenDClient::cancelOrder(const AccountHeader& header, std::uint64_t
 
 Result<bool> OpenDClient::modifyOrder(const AccountHeader& header, std::uint64_t orderId,
                                       std::int64_t qty, Money priceMills) {
+  if (header.readOnly()) {
+    return Error{ErrorCode::kInvalidArg, "read-only account header cannot write"};
+  }
   if (qty <= 0 || priceMills <= 0) {
     return Error{ErrorCode::kInvalidArg, "invalid modify request"};
   }

@@ -41,6 +41,7 @@ rate:
 
 engine:
   reconcile_every_s: 15
+  cash_tolerance_hkd: 100     # REAL requires it: broker cash must match our accounting within this
 
 state:
   dir: "/var/lib/futu_trader"

@@ -59,7 +59,7 @@ void Secret::wipe() {
 
 Result<Secret> readSecretFile(const std::string& path) {
   // O_NOFOLLOW: a symlink (possibly planted to point at another file) is refused outright.
-  const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
   if (fd < 0) {
     return Error{ErrorCode::kInvalidArg,
                  "secret file cannot be opened (missing, unreadable or a symlink): " + path};

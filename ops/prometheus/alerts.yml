@@ -8,36 +8,47 @@ groups:
         expr: up{job="futu_trader"} == 0
         for: 30s
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
-          summary: "futu_trader is not scrapeable"
-          description: "The process is down or hung. Resting orders may still be live at the broker: check the broker app, then docs/runbook.md#process-down."
+          summary: "futu_trader is not scrapeable (crashed, hung, or exited after a halt)"
+          description: "The process halts and EXITS on a kill-switch trip (exit 6/7), so this is also what a halt looks like once the 5 s scrape misses it. Resting orders may still be live at the broker: check the broker app first, then `systemctl status futu-trader` for the exit status and the state dir for kill_switch.tripped. docs/runbook.md#process-down."
 
       - alert: FutuKillSwitchTripped
         expr: futu_kill_switch_tripped == 1
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "Kill switch tripped: trading is blocked"
           description: "An automatic halt or an operator tripped it. It stays tripped across restarts until a human resets it. See docs/runbook.md#kill-switch-tripped."
 
       - alert: FutuHaltPending
         expr: futu_oms_halt_pending == 1
-        for: 1m
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "A cancel-all is scheduled but not finished for over a minute"
           description: "Orders may still be resting at the broker. Cancel them by hand in the broker app, then see docs/runbook.md#halt-pending."
 
       - alert: FutuOpenDDisconnected
         expr: futu_opend_connected == 0
-        for: 30s
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "OpenD link is down"
           description: "No quotes, no fills, no cancels. Trading was halted when the link dropped. See docs/runbook.md#opend-down."
 
+      - alert: FutuKillSwitchNotPersisted
+        expr: futu_kill_switch_persist_failed == 1
+        labels: {severity: page}
+        keep_firing_for: 30m
+        annotations:
+          summary: "A kill-switch trip could not be written to disk"
+          description: "A restart would NOT be blocked. Do not restart until the cause (disk full / read-only state dir) is fixed and the halt reason is understood."
+
       - alert: FutuWalFailed
         expr: futu_wal_failed == 1 or increase(futu_wal_write_errors_total[5m]) > 0
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "Write-ahead log cannot be written"
           description: "Orders are refused (fail closed) and trading halts. Check disk space and permissions on the state dir."
@@ -45,6 +56,7 @@ groups:
       - alert: FutuIntentNotDurable
         expr: increase(futu_oms_durable_failures_total[5m]) > 0
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "An order intent could not be logged before sending"
           description: "The order was NOT sent; trading halted. Same cause as FutuWalFailed."
@@ -52,6 +64,7 @@ groups:
       - alert: FutuEngineFailed
         expr: futu_engine_failed == 1
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "Engine thread stopped on an unexpected exception"
           description: "Quote handling is dead and the kill switch tripped. Collect the log, do not restart blindly."
@@ -59,6 +72,7 @@ groups:
       - alert: FutuStrategyFault
         expr: increase(futu_engine_strategy_faults_total[5m]) > 0
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "The strategy threw and was disabled"
           description: "Trading halted and resting orders were cancelled."
@@ -66,24 +80,40 @@ groups:
       - alert: FutuReconcileProblems
         expr: increase(futu_engine_reconcile_problems_total[10m]) > 0
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "Reconciliation with the broker found a problem"
           description: "Our books and the broker disagree (or the check could not complete). Repeated failures trip the kill switch."
 
       - alert: FutuReconcileStalled
-        expr: increase(futu_engine_reconciles_total[5m]) == 0
-        for: 5m
+        # Only meaningful while the process is up (a down process is FutuTraderDown). reconcile_every_s
+        # is mandatory (>= 1), so a live process always reconciles at least every hour at most.
+        expr: increase(futu_engine_reconciles_total[10m]) == 0 and up{job="futu_trader"} == 1
+        for: 1m
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
-          summary: "No reconciliation has run for 5 minutes"
+          summary: "No reconciliation has run for 10 minutes"
           description: "The reconciler thread is stuck or the broker is not answering; positions are unverified."
 
       - alert: FutuForeignPush
         expr: increase(futu_push_foreign_total[10m]) > 0
         labels: {severity: page}
+        keep_firing_for: 30m
         annotations:
           summary: "Pushes arrived for another account, environment or market"
           description: "Possible SIMULATE/REAL mix-up or a second client on the same OpenD. Investigate before trading further."
+
+  - name: futu_trader_meta
+    rules:
+      # Always firing: Alertmanager routes it to a dead-man's-switch receiver. If it STOPS arriving,
+      # Prometheus or Alertmanager (and with them every alert here) is dead.
+      - alert: Watchdog
+        expr: vector(1)
+        labels: {severity: none}
+        annotations:
+          summary: "Alerting pipeline heartbeat"
+          description: "Page someone if this stops arriving at the dead-man's-switch receiver."
 
   - name: futu_trader_warning
     rules:
@@ -123,6 +153,27 @@ groups:
         annotations:
           summary: "OMS recorded an anomaly (illegal transition, duplicate id, unknown status)"
           description: "Read the journal around the time of the alert."
+
+      - alert: FutuAuditRecordsDropped
+        expr: increase(futu_wal_dropped_async_total[10m]) > 0
+        labels: {severity: warn}
+        annotations:
+          summary: "Audit journal records were dropped (queue full)"
+          description: "The WAL writer cannot keep up (slow disk). Order intents are never dropped, but the audit trail has holes."
+
+      - alert: FutuUndecodablePushes
+        expr: increase(futu_push_undecodable_total[10m]) > 0
+        labels: {severity: warn}
+        annotations:
+          summary: "Trade pushes from OpenD could not be decoded"
+          description: "Fills or order updates may be missing; reconciliation is the backstop. Check OpenD version against third_party/futu_proto/PROTO_VERSION."
+
+      - alert: FutuOpenDReconnecting
+        expr: increase(futu_opend_reconnects_total[15m]) > 2
+        labels: {severity: warn}
+        annotations:
+          summary: "OpenD link reconnected more than twice in 15 minutes"
+          description: "A flapping link halts trading each time (the kill switch needs a human reset)."
 
       - alert: FutuQuoteDecodeErrors
         expr: increase(futu_quote_decode_errors_total[10m]) > 0

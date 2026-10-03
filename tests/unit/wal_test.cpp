@@ -319,3 +319,58 @@ TEST(Wal, ACorruptLogIsRefusedNotAppendedToOrOverwritten) {
   spit(file.path, "this is definitely not a wal file");
   EXPECT_FALSE(Wal::open({file.path}).ok());
 }
+
+TEST(Wal, MidFileCorruptionThatLooksLikeATornTailIsRefusedNotTruncated) {
+  TempFile file("futu_wal_midcorrupt.wal");
+  {
+    auto wal = Wal::open({file.path});
+    ASSERT_TRUE(wal.ok());
+    for (int i = 0; i < 5; ++i) {
+      ASSERT_TRUE(wal.value()->appendDurable("intent-number-" + std::to_string(i)).ok());
+    }
+  }
+  std::string bytes = slurp(file.path);
+  // Record 1's length field now claims 5000 bytes: it "runs past the end", exactly like a torn
+  // tail.
+  const std::size_t secondRecord = 8 + (4 + 15 + 4);
+  bytes[secondRecord] = static_cast<char>(5000 & 0xFF);
+  bytes[secondRecord + 1] = static_cast<char>(5000 >> 8);
+  spit(file.path, bytes);
+  EXPECT_EQ(readWal(file.path).status, WalStatus::kTruncated);  // the ambiguity is real
+  EXPECT_FALSE(Wal::open({file.path}).ok());
+  EXPECT_EQ(slurp(file.path), bytes);  // records 2-4 were NOT destroyed
+}
+
+TEST(Wal, ARealTornTailIsSavedAsideBeforeItIsCut) {
+  TempFile file("futu_wal_savetorn.wal");
+  std::string two;
+  std::string three;
+  {
+    auto wal = Wal::open({file.path});
+    ASSERT_TRUE(wal.ok());
+    ASSERT_TRUE(wal.value()->appendDurable("a").ok());
+    two = slurp(file.path);
+    ASSERT_TRUE(wal.value()->appendDurable("b-being-written").ok());
+    three = slurp(file.path);
+  }
+  spit(file.path, three.substr(0, two.size() + 6));
+  {
+    auto wal = Wal::open({file.path});
+    ASSERT_TRUE(wal.ok());
+  }
+  const std::string saved = file.path + ".torn-" + std::to_string(two.size());
+  EXPECT_EQ(slurp(saved), three.substr(two.size(), 6));
+  std::filesystem::remove(saved);
+}
+
+TEST(Wal, ASecondOpenOfTheSameLogIsRefusedWhileTheFirstIsAlive) {
+  TempFile file("futu_wal_lock.wal");
+  auto first = Wal::open({file.path});
+  ASSERT_TRUE(first.ok());
+  const auto second = Wal::open({file.path});
+  ASSERT_FALSE(second.ok());
+  EXPECT_NE(second.error().message.find("locked"), std::string::npos);
+  ASSERT_TRUE(first.value()->appendDurable("still works").ok());
+  first.value().reset();  // releasing the first makes the log available again
+  EXPECT_TRUE(Wal::open({file.path}).ok());
+}

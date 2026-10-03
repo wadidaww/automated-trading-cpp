@@ -1,8 +1,10 @@
 #include "futu_trader/app/config.hpp"
 
+#include <sys/stat.h>
 #include <yaml-cpp/yaml.h>
 
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <optional>
@@ -197,8 +199,15 @@ AppConfig parseNode(const YAML::Node& root) {
     cfg.strategy.window = static_cast<std::size_t>(s.getOr<std::int64_t>("window", 60));
     cfg.strategy.entryZx10 = s.getOr<int>("entry_z_x10", 20);
     cfg.strategy.exitZx10 = s.getOr<int>("exit_z_x10", 0);
-    cfg.strategy.cancelAfterQuotes =
-        static_cast<std::size_t>(s.getOr<std::int64_t>("cancel_after_quotes", 8));
+    if (cfg.strategy.entryZx10 < 1 || cfg.strategy.entryZx10 > 100 || cfg.strategy.exitZx10 < 0 ||
+        cfg.strategy.exitZx10 > 100) {
+      fail("'strategy.entry_z_x10' must be 1..100 and 'strategy.exit_z_x10' 0..100");
+    }
+    const auto cancelAfter = s.getOr<std::int64_t>("cancel_after_quotes", 8);
+    if (cancelAfter < 1 || cancelAfter > 100'000) {
+      fail("'strategy.cancel_after_quotes' must be 1..100000");
+    }
+    cfg.strategy.cancelAfterQuotes = static_cast<std::size_t>(cancelAfter);
     if (cfg.strategy.window < 2 || cfg.strategy.window > 100'000) {
       fail("'strategy.window' must be 2..100000");
     }
@@ -217,7 +226,11 @@ AppConfig parseNode(const YAML::Node& root) {
     cfg.risk.maxPortfolioNotional = hkdToMills(s, "max_portfolio_notional_hkd");
     cfg.risk.maxDailyLoss = hkdToMills(s, "max_daily_loss_hkd");
     cfg.risk.maxOrderNotional = hkdToMills(s, "max_order_notional_hkd");
-    cfg.risk.maxOpenOrders = static_cast<std::size_t>(positive(s, "max_open_orders"));
+    const auto openOrders = positive(s, "max_open_orders");
+    if (openOrders > 1000) {
+      fail("'risk.max_open_orders' must be <= 1000");
+    }
+    cfg.risk.maxOpenOrders = static_cast<std::size_t>(openOrders);
     cfg.risk.concentrationLimit = s.get<double>("concentration_limit");
     // Written as a negated conjunction on purpose: it also refuses NaN, which De Morgan would not.
     if (!(cfg.risk.concentrationLimit > 0.0 &&  // NOLINT(readability-simplify-boolean-expr)
@@ -229,6 +242,9 @@ AppConfig parseNode(const YAML::Node& root) {
       fail("'risk.price_band_bps' must be <= 5000");
     }
     cfg.risk.maxQuoteAgeMs = positive(s, "max_quote_age_ms");
+    if (cfg.risk.maxQuoteAgeMs > 60'000) {
+      fail("'risk.max_quote_age_ms' must be <= 60000");
+    }
     cfg.risk.allowShort = s.get<bool>("allow_short");  // explicit: shorting is never implied
     if (cfg.risk.maxPositionNotional > cfg.risk.maxPortfolioNotional) {
       fail("'risk.max_position_notional_hkd' exceeds 'risk.max_portfolio_notional_hkd'");
@@ -239,8 +255,15 @@ AppConfig parseNode(const YAML::Node& root) {
   }
   {
     auto s = top.sub("rate");
-    cfg.rate.maxPerWindow = static_cast<std::size_t>(positive(s, "max_per_window"));
+    const auto perWindow = positive(s, "max_per_window");
+    if (perWindow > 1000) {
+      fail("'rate.max_per_window' must be <= 1000 (OpenD allows about 15 per 30 s)");
+    }
+    cfg.rate.maxPerWindow = static_cast<std::size_t>(perWindow);
     cfg.rate.windowMs = positive(s, "window_ms");
+    if (cfg.rate.windowMs > 3'600'000) {
+      fail("'rate.window_ms' must be <= 3600000");
+    }
     cfg.rate.reservedForCancels = static_cast<std::size_t>(positive(s, "reserved_for_cancels"));
     if (cfg.rate.reservedForCancels >= cfg.rate.maxPerWindow) {
       fail("'rate.reserved_for_cancels' must be below 'rate.max_per_window'");
@@ -254,12 +277,15 @@ AppConfig parseNode(const YAML::Node& root) {
       fail("'engine.ring_capacity' must be 16..16777216");
     }
     cfg.engine.maxQuoteAgeMs = s.getOr<std::int64_t>("max_quote_age_ms", 1000);
-    if (cfg.engine.maxQuoteAgeMs < 0) {
-      fail("'engine.max_quote_age_ms' must be >= 0");
+    if (cfg.engine.maxQuoteAgeMs < 1 || cfg.engine.maxQuoteAgeMs > 60'000) {
+      fail("'engine.max_quote_age_ms' must be 1..60000 (0 would disable the stale-quote skip)");
     }
     cfg.engine.reconcileEverySec = s.getOr<std::int64_t>("reconcile_every_s", 30);
-    if (cfg.engine.reconcileEverySec < 1) {
-      fail("'engine.reconcile_every_s' must be >= 1 (reconciliation is not optional)");
+    if (cfg.engine.reconcileEverySec < 1 || cfg.engine.reconcileEverySec > 3600) {
+      fail("'engine.reconcile_every_s' must be 1..3600 (reconciliation is not optional)");
+    }
+    if (s.has("cash_tolerance_hkd")) {
+      cfg.engine.cashTolerance = hkdToMills(s, "cash_tolerance_hkd");
     }
     cfg.engine.busyPoll = s.getOr<bool>("busy_poll", false);
     cfg.engine.engineCpu = s.getOr<int>("engine_cpu", -1);
@@ -282,15 +308,28 @@ AppConfig parseNode(const YAML::Node& root) {
     Section s(*node, "live");
     cfg.live.ackPhrase = s.getOr<std::string>("ack_phrase", "");
     cfg.live.promotionLog = s.getOr<std::string>("promotion_log", "");
-    cfg.live.requiredCleanDays =
-        static_cast<std::size_t>(s.getOr<std::int64_t>("required_clean_days", 5));
+
     cfg.live.minSessionMinutes = s.getOr<std::int64_t>("min_session_minutes", 240);
-    if (cfg.live.minSessionMinutes < 0) {
-      fail("'live.min_session_minutes' must be >= 0");
+    if (cfg.live.minSessionMinutes < 60 || cfg.live.minSessionMinutes > 1440) {
+      fail("'live.min_session_minutes' must be 60..1440 (a shorter run is not a day's evidence)");
     }
-    if (cfg.live.requiredCleanDays < 5) {
-      fail("'live.required_clean_days' must be at least 5");
+    const auto cleanDays = s.getOr<std::int64_t>("required_clean_days", 5);
+    if (cleanDays < 5 || cleanDays > 365) {
+      fail("'live.required_clean_days' must be 5..365");
     }
+    cfg.live.requiredCleanDays = static_cast<std::size_t>(cleanDays);
+    if (!cfg.live.promotionLog.empty()) {
+      const auto parent =
+          std::filesystem::path(cfg.live.promotionLog).lexically_normal().parent_path();
+      if (parent != std::filesystem::path(cfg.state.dir).lexically_normal()) {
+        fail(
+            "'live.promotion_log' must be a file directly inside 'state.dir' (a private "
+            "directory)");
+      }
+    }
+  }
+  if (cfg.mode == Mode::kReal && !cfg.engine.cashTolerance) {
+    fail("mode 'real' requires engine.cash_tolerance_hkd (cash reconciliation is mandatory)");
   }
   if (cfg.mode == Mode::kReal && (cfg.live.ackPhrase.empty() || cfg.live.promotionLog.empty())) {
     fail("mode 'real' requires live.ack_phrase and live.promotion_log");
@@ -315,15 +354,24 @@ Result<AppConfig> parseConfig(const std::string& yamlText) {
 }
 
 Result<AppConfig> loadConfigFile(const std::string& path) {
+  // The config holds the risk limits: refuse one that other users could have edited.
+  struct stat info {};
+  if (::stat(path.c_str(), &info) != 0) {
+    return Error{ErrorCode::kInvalidArg, "config: cannot read " + path};
+  }
+  if ((info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+    return Error{ErrorCode::kInvalidArg,
+                 "config: " + path + " is writable by group or others; chmod go-w it"};
+  }
+  if (info.st_size > (1 << 20)) {
+    return Error{ErrorCode::kInvalidArg, "config: file too large"};
+  }
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     return Error{ErrorCode::kInvalidArg, "config: cannot read " + path};
   }
   std::ostringstream text;
   text << in.rdbuf();
-  if (text.str().size() > (1U << 20)) {
-    return Error{ErrorCode::kInvalidArg, "config: file too large"};
-  }
   return parseConfig(text.str());
 }
 

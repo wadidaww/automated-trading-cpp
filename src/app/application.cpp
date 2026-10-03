@@ -1,5 +1,6 @@
 #include "futu_trader/app/application.hpp"
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <thread>
 
@@ -76,9 +78,13 @@ Log defaultLog() {
 // State directory: created owner-only; an existing one must be ours and not group/world writable.
 Result<bool> prepareStateDir(const std::string& dir) {
   std::error_code ec;
+  const bool existed = fs::exists(dir, ec);
   fs::create_directories(dir, ec);
   if (ec) {
     return Error{ErrorCode::kInvalidArg, "cannot create state dir " + dir + ": " + ec.message()};
+  }
+  if (!existed) {
+    ::chmod(dir.c_str(), 0700);  // created by us: owner-only whatever the umask was
   }
   struct stat info {};
   if (::stat(dir.c_str(), &info) != 0 || !S_ISDIR(info.st_mode)) {
@@ -96,9 +102,18 @@ Result<bool> prepareStateDir(const std::string& dir) {
 // A text file we make a safety decision from (the promotion log): a regular file we own that others
 // cannot write. Not a defence against root, only against mistakes and other users.
 Result<std::string> readTrustedText(const std::string& path, std::size_t maxBytes) {
+  // Checks and read use ONE descriptor, so the file cannot be swapped between them.
+  const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+  if (fd < 0) {
+    return Error{ErrorCode::kInvalidArg, "cannot open (missing, or a symlink): " + path};
+  }
+  struct Closer {
+    int fd;
+    ~Closer() { ::close(fd); }
+  } closer{fd};
   struct stat info {};
-  if (::lstat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) {
-    return Error{ErrorCode::kInvalidArg, "not a regular file (or a symlink): " + path};
+  if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
+    return Error{ErrorCode::kInvalidArg, "not a regular file: " + path};
   }
   if (info.st_uid != ::geteuid() || (info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
     return Error{ErrorCode::kInvalidArg,
@@ -107,10 +122,19 @@ Result<std::string> readTrustedText(const std::string& path, std::size_t maxByte
   if (static_cast<std::size_t>(info.st_size) > maxBytes) {
     return Error{ErrorCode::kInvalidArg, "file too large: " + path};
   }
-  std::ifstream in(path, std::ios::binary);
-  std::ostringstream text;
-  text << in.rdbuf();
-  return text.str();
+  std::string text;
+  std::array<char, 4096> buf{};
+  while (text.size() <= maxBytes) {  // bounded even if the file grows after fstat
+    const ssize_t n = ::read(fd, buf.data(), buf.size());
+    if (n <= 0) {
+      break;
+    }
+    text.append(buf.data(), static_cast<std::size_t>(n));
+  }
+  if (text.size() > maxBytes) {
+    return Error{ErrorCode::kInvalidArg, "file too large: " + path};
+  }
+  return text;
 }
 
 struct Startup {
@@ -172,11 +196,21 @@ bool startupReconcileIsClean(const AppConfig& cfg, opend::OpenDClient& client,
   oms::OmsConfig oc;
   oc.sessionEpoch = "STARTUPCHECK";
   oc.reserveOrders = 1000;
+  oc.cashToleranceMills = cfg.engine.cashTolerance;
   oms::Oms oms(venue, risk, rate, kill, book, clock, oc);
   const auto boot = oms.bootstrap();
   if (!boot) {
     log("startup check: bootstrap failed: " + boot.error().message);
     return false;
+  }
+  for (const auto& order : oms.orders()) {
+    if (order.external && oms::isLive(order.state)) {
+      // Someone (a human, another program) has a live order on this account. We would adopt it
+      // and could cancel it in a halt: not something to discover with real money at stake.
+      log("startup check: the account has a live order we did not place (" + order.symbol +
+          "); cancel it or trade another account");
+      return false;
+    }
   }
   const auto report = oms.reconcile();
   if (!report.clean() || oms.unresolvedCount() != 0 || kill.tripped()) {
@@ -211,6 +245,10 @@ int resetKillSwitch(const AppConfig& config, const std::string& operatorName, co
     return kExitRefused;
   }
   log("kill switch reset by " + operatorName);
+  {  // The audit trail lives on disk next to the state it concerns, not only in a terminal.
+    std::ofstream audit((fs::path(config.state.dir) / "audit.log").string(), std::ios::app);
+    audit << hkDate(wallNowNs()) << " kill switch reset by " << operatorName << "\n";
+  }
   return kExitOk;
 }
 
@@ -230,12 +268,28 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
         (h.memoryLocked ? "ok" : "unavailable"));
   }
 
+  // A clock that was never set (before NTP) would make "today" meaningless: intents would be judged
+  // to be from an old day and not restored, and the live gate would judge the promotion log
+  // wrongly.
+  if (wallNowNs() < 1'735'689'600LL * 1'000'000'000LL) {  // 2025-01-01
+    log("refused: the system clock is before 2025-01-01; wait for time sync");
+    return kExitRefused;
+  }
+
   // 1. State directory and the persistent kill switch.
   if (const auto dir = prepareStateDir(cfg.state.dir); !dir) {
     log("refused: " + dir.error().message);
     return kExitRefused;
   }
   const fs::path stateDir(cfg.state.dir);
+  {
+    std::error_code ec;
+    if (fs::symlink_status(stateDir / "HALT", ec).type() != fs::file_type::not_found) {
+      log("refused: " + (stateDir / "HALT").string() +
+          " exists (the external halt lever); remove it deliberately, then start again");
+      return kExitRefused;
+    }
+  }
   execution::KillSwitch kill((stateDir / "kill_switch.tripped").string());
   if (kill.tripped()) {
     log("refused: the kill switch is tripped (" + kill.reason() +
@@ -253,9 +307,17 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
   }
   std::vector<oms::DurableSubmit> pastIntents;
   for (const auto& record : infra::readWal(walPath).records) {
-    if (auto submit = oms::decodeSubmit(record)) {
-      pastIntents.push_back(std::move(*submit));
+    if (record.empty() || record[0] != 'S') {
+      continue;  // audit entries ('J'); only submit records matter for restart safety
     }
+    auto submit = oms::decodeSubmit(record);
+    if (!submit) {
+      // A checksum-valid submit record we cannot read (newer format?) is an order intent we would
+      // silently forget: the one thing the log exists to prevent.
+      log("refused: the write-ahead log holds a submit record this build cannot decode");
+      return kExitRefused;
+    }
+    pastIntents.push_back(std::move(*submit));
   }
 
   // 3. OpenD.
@@ -269,9 +331,23 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
     log("cannot connect to OpenD: " + session.error().message);
     return kExitConnect;
   }
-  struct ClientCloser {
+  // Closes the link on every exit path and, if we unlocked trading, locks it again first: a refused
+  // or finished process must not leave the real account unlocked for any other local OpenD client.
+  struct ClientGuard {
     opend::OpenDClient& c;
-    ~ClientCloser() { c.close(); }
+    bool unlocked{false};
+    bool released{false};
+    void release() {
+      if (released) {
+        return;
+      }
+      released = true;
+      if (unlocked) {
+        static_cast<void>(c.unlockTrade(false, std::string()));
+      }
+      c.close();
+    }
+    ~ClientGuard() { release(); }
   } closer{client};
 
   const auto accounts = client.getAccList();
@@ -309,11 +385,6 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
       log("refused: " + secret.error().message);
       return kExitRefused;
     }
-    const auto unlocked = client.unlockTrade(secret.value());
-    if (!unlocked) {
-      log("refused: trade unlock failed: " + unlocked.error().message);
-      return kExitRefused;
-    }
     auto promotion = readTrustedText(cfg.live.promotionLog, oms::kMaxPromotionLogBytes);
     if (!promotion) {
       log("refused: promotion log: " + promotion.error().message);
@@ -331,9 +402,24 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
     gate.promotion = std::move(entries.value());
     gate.requiredCleanDays = cfg.live.requiredCleanDays;
     gate.today = opts.today.empty() ? hkDate(wallNowNs()) : opts.today;
-    gate.tradeUnlocked = true;
     gate.configuredAccId = cfg.account.id;
     gate.brokerAccounts = accounts.value();
+    // Every gate that does not need the unlock is evaluated BEFORE unlocking, so a refusal (no
+    // --live, wrong phrase, stale promotion, ...) never leaves the real account unlocked at OpenD.
+    // Only the unlock itself is still outstanding in this dry run.
+    oms::LiveGateInput dryRun = gate;
+    dryRun.tradeUnlocked = true;
+    if (const auto early = oms::LiveGate::approveRealPending(dryRun); !early) {
+      log("refused: " + early.error().message);
+      return kExitRefused;
+    }
+    const auto unlocked = client.unlockTrade(secret.value());
+    if (!unlocked) {
+      log("refused: trade unlock failed: " + unlocked.error().message);
+      return kExitRefused;
+    }
+    closer.unlocked = true;
+    gate.tradeUnlocked = true;
     const auto pending = oms::LiveGate::approveRealPending(gate);
     if (!pending) {
       log("refused: " + pending.error().message);
@@ -364,6 +450,8 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
   oms::OpenDVenue venue(client, *target);
   oms::OmsConfig oc;
   oc.sessionEpoch = std::to_string(wallNowNs() / 1'000'000);
+  oc.cashToleranceMills = cfg.engine.cashTolerance;
+  oc.requireDurable = true;  // never send an order without the write-ahead sink
   oms::Oms oms(venue, risk, rate, kill, book, clock, oc);
 
   // Write-ahead: the intent is durable before the order can leave the process. The record carries
@@ -412,7 +500,11 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
 
   // Pushes: trade events to the OMS router, quotes to the engine's ring. Runs on the OpenD reader
   // thread, which is the engine's single producer; it never calls the venue.
-  opend::QuoteAssembler quotes;
+  std::set<std::string> subscribedCodes;
+  for (const auto& sym : cfg.symbols) {
+    subscribedCodes.insert(sym.code);
+  }
+  opend::QuoteAssembler quotes(std::move(subscribedCodes));  // anything else is dropped
   std::atomic<std::uint64_t> quoteDecodeErrors{0};
   client.setPushHandler([&](const opend::Frame& frame) {
     if (isTradePush(frame.protoId)) {
@@ -438,9 +530,9 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
   // declared before this point. Declared AFTER them, this guard is destroyed BEFORE them on every
   // exit path, so the reader is joined while everything it touches is still alive.
   struct ReaderStopper {
-    opend::OpenDClient& c;
-    ~ReaderStopper() { c.close(); }
-  } readerStopper{client};
+    ClientGuard& guard;
+    ~ReaderStopper() { guard.release(); }  // relock, then close (joins the reader thread)
+  } readerStopper{closer};
 
   std::vector<opend::SecurityRef> securities;
   securities.reserve(cfg.symbols.size());
@@ -498,6 +590,10 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
                       [&quoteDecodeErrors] { return quoteDecodeErrors.load(); })
           .ok() &&
       registry
+          .addCounter("futu_opend_reconnects_total", "OpenD reconnections.",
+                      [&client] { return static_cast<std::uint64_t>(client.reconnectCount()); })
+          .ok() &&
+      registry
           .addGauge("futu_opend_connected", "1 while the OpenD link is up.",
                     [&client] { return client.isConnected() ? 1.0 : 0.0; })
           .ok();
@@ -538,28 +634,64 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
   // 9. Shutdown. Stop quote handling first so nothing new is ordered, then cancel what rests.
   const bool halted = kill.tripped() || engine.stats().engineFailed.load();
   engine.stop();
+  const std::string haltReason = kill.tripped() ? kill.reason() : std::string("engine failure");
   if (halted) {
-    log("trading halted: " + (kill.tripped() ? kill.reason() : std::string("engine failure")));
-    oms.haltAndCancelAll(kill.tripped() ? kill.reason() : "engine failure");
+    log("trading halted: " + haltReason);
   } else {
     log("stop requested: cancelling resting orders");
-    const auto report = oms.cancelAllLive();
+  }
+  // Keep trying until the deadline: the link may be down (a halt often IS the link going down) or
+  // an order of unknown outcome may need a reconciliation to learn its broker id before it can be
+  // cancelled. Exiting after one failed pass would leave orders resting with nothing in the log.
+  const auto settleDeadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.shutdownDeadlineMs);
+  bool settled = false;
+  while (true) {
+    const auto report = halted ? oms.haltAndCancelAll(haltReason) : oms.cancelAllLive();
     log("cancel requested for " + std::to_string(report.cancelRequested) + " order(s), " +
         std::to_string(report.cancelFailed) + " failed, " +
         std::to_string(report.unresolvedWithoutVenueId) + " of unknown outcome");
+    if (report.cancelFailed == 0 && report.unresolvedWithoutVenueId == 0) {
+      settled = true;
+      break;
+    }
+    if (std::chrono::steady_clock::now() >= settleDeadline) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(opts.shutdownRetryMs));
+    static_cast<void>(oms.reconcile());  // learns broker ids of unknown orders; refreshes states
+  }
+  if (!settled) {
+    log("WARNING: orders may still be resting at the broker: check the broker app NOW");
   }
   // SIMULATE sessions leave evidence for the live gate: one line per day, dirty is sticky.
   if (!real && !cfg.live.promotionLog.empty()) {
     const auto minutes = std::chrono::duration_cast<std::chrono::minutes>(
                              std::chrono::steady_clock::now() - sessionStart)
                              .count();
-    const bool problems = halted || engine.stats().reconcileProblems.load() != 0 ||
-                          oms.anomalyCount() != 0 || oms.unresolvedCount() != 0 ||
-                          router.foreign() != 0;
+    // A clean day needs evidence the strategy actually ran: an idle process earns nothing.
+    const bool idle = engine.stats().processed.load() == 0;
+    const std::array<std::pair<bool, const char*>, 6> checks{{
+        {!settled, "cancels incomplete"},
+        {halted, "halted"},
+        {engine.stats().reconcileProblems.load() != 0, "reconcile problems"},
+        {oms.anomalyCount() != 0, "OMS anomalies"},
+        {oms.unresolvedCount() != 0, "unresolved orders"},
+        {router.foreign() != 0, "foreign pushes"},
+    }};
+    std::string why;
+    for (const auto& [bad, what] : checks) {
+      if (bad) {
+        why += std::string(why.empty() ? "" : ", ") + what;
+      }
+    }
+    const bool problems = !why.empty();
     const std::string date = opts.today.empty() ? hkDate(wallNowNs()) : opts.today;
-    if (problems || minutes >= cfg.live.minSessionMinutes) {
+    if (!problems && idle) {
+      log("promotion log: no quotes were processed this session, nothing recorded");
+    } else if (problems || minutes >= cfg.live.minSessionMinutes) {
       const auto recorded = recordPromotionDay(cfg.live.promotionLog, date, !problems);
-      log(recorded ? "promotion log: " + date + (problems ? " dirty" : " clean")
+      log(recorded ? "promotion log: " + date + (problems ? " dirty (" + why + ")" : " clean")
                    : "promotion log NOT updated: " + recorded.error().message);
     } else {
       log("promotion log: session shorter than live.min_session_minutes, nothing recorded");
@@ -570,6 +702,9 @@ int runTrader(const AppConfig& cfg, RunOptions& opts) {
   }
   walPtr->flush();
   log("stopped");
+  if (!settled) {
+    return kExitOrdersMayRest;
+  }
   return halted ? kExitHalted : kExitOk;
 }
 

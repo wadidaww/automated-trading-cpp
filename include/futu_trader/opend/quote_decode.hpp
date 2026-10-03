@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "futu_trader/core/result.hpp"
@@ -25,6 +26,12 @@ namespace futu_trader::opend {
  */
 class QuoteAssembler {
  public:
+  QuoteAssembler() = default;
+  /**
+   * Only these symbol codes are accepted; every other code is dropped and counted. Without it the
+   * per-symbol state grows with whatever codes a (forged) feed names. Empty = accept all (tests).
+   */
+  explicit QuoteAssembler(std::set<std::string> allowed) : allowed_(std::move(allowed)) {}
   /**
    * Feeds one push frame. Returns an event when the frame completes a quote. A frame that is not a
    * quote push, or is for a non-HK security, yields nullopt; a malformed one yields an error (and
@@ -33,12 +40,15 @@ class QuoteAssembler {
   Result<std::optional<QuoteEvent>> onFrame(const Frame& frame, std::int64_t recvNs);
 
   std::uint64_t ignoredNonHk() const { return ignoredNonHk_; }
+  std::uint64_t ignoredUnsubscribed() const { return ignoredUnsubscribed_; }
 
  private:
   struct SymbolState {
     Money last{0};  // 0 = unknown or suspended
   };
   std::map<std::string, SymbolState> symbols_;
+  std::set<std::string> allowed_;
+  std::uint64_t ignoredUnsubscribed_{0};
   std::uint64_t ignoredNonHk_{0};
 };
 

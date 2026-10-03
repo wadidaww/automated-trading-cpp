@@ -75,6 +75,11 @@ namespace futu_trader::opend {
  * way to build a REAL header: only oms::TradeTarget can, and a REAL TradeTarget requires a
  * LiveApproval that only LiveGate::approveReal can issue. So "sent to real money" is unforgeable
  * at compile time, not just by convention.
+ *
+ * The one exception is the READ-ONLY REAL header the startup reconciliation needs before the final
+ * approval exists (oms::TradeTarget::realReadOnly, from a PendingLiveApproval). It carries a
+ * read-only bit that the client's wire layer enforces: OpenDClient::placeOrder/cancelOrder/
+ * modifyOrder refuse it, so it cannot move money however it is used.
  */
 class AccountHeader {
  public:
@@ -85,14 +90,16 @@ class AccountHeader {
   TrdEnv env() const { return env_; }
   std::uint64_t accId() const { return accId_; }
   TrdMarket market() const { return market_; }
+  bool readOnly() const { return readOnly_; }
 
  private:
   friend class oms::TradeTarget;
-  AccountHeader(TrdEnv env, std::uint64_t accId, TrdMarket market)
-      : env_(env), accId_(accId), market_(market) {}
+  AccountHeader(TrdEnv env, std::uint64_t accId, TrdMarket market, bool readOnly = false)
+      : env_(env), accId_(accId), market_(market), readOnly_(readOnly) {}
   TrdEnv env_;
   std::uint64_t accId_;
   TrdMarket market_;
+  bool readOnly_;
 };
 
 /**

@@ -27,11 +27,18 @@ jobs:
       id-token: write       # keyless cosign signing
     steps:
       - name: Refuse anything that is not a full commit SHA
+        env:
+          REF: ${{ inputs.ref }}   # via env, never interpolated into the script text
         run: |
-          [[ "${{ inputs.ref }}" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a 40-hex commit SHA"; exit 1; }
+          [[ "$REF" =~ ^[0-9a-f]{40}$ ]] || { echo "ref must be a 40-hex commit SHA"; exit 1; }
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Refuse a commit that is not on main (it must have been reviewed)
+        env:
+          REF: ${{ inputs.ref }}
+        run: git merge-base --is-ancestor "$REF" origin/main || { echo "$REF is not an ancestor of origin/main"; exit 1; }
       - name: Run the full test suite before building the image
         run: |
           sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libprotobuf-dev protobuf-compiler libboost-dev libssl-dev libyaml-cpp-dev

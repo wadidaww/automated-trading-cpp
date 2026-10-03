@@ -455,3 +455,48 @@ TEST(TradeTarget, ReadOnlyVenueRefusesToPlaceOrCancelWithoutTouchingTheWire) {
   ASSERT_FALSE(cancelled.ok());
   EXPECT_NE(cancelled.error().message.find("read-only"), std::string::npos);
 }
+
+TEST(TradeTarget, AReadOnlyRealHeaderIsRefusedByTheClientsWireLayerForEveryWriteCall) {
+  const auto pending = LiveGate::approveRealPending(validInput());
+  ASSERT_TRUE(pending.ok());
+  const auto target = TradeTarget::realReadOnly(pending.value(), 123456789, opend::TrdMarket::kHK);
+  ASSERT_TRUE(target.ok());
+  const auto header = target.value().header();
+  EXPECT_TRUE(header.readOnly());
+  EXPECT_EQ(header.env(), TrdEnv::kReal);
+  opend::OpenDClient client{opend::ClientConfig{}};  // never connected: only the guard can answer
+  opend::PlaceOrderRequest request;
+  request.code = "00700";
+  request.qty = 100;
+  request.priceMills = 350'000;
+  const auto placed = client.placeOrder(header, request);
+  ASSERT_FALSE(placed.ok());
+  EXPECT_NE(placed.error().message.find("read-only"), std::string::npos);  // ...for THIS reason
+  const auto cancelled = client.cancelOrder(header, 1);
+  EXPECT_NE(cancelled.error().message.find("read-only"), std::string::npos);
+  const auto modified = client.modifyOrder(header, 1, 100, 350'000);
+  EXPECT_NE(modified.error().message.find("read-only"), std::string::npos);
+}
+
+TEST(KillSwitchPersistence, ATripThatCannotBeWrittenStillHaltsAndIsFlagged) {
+  execution::KillSwitch kill("/nonexistent-dir/kill_switch.tripped");
+  kill.trip("test");
+  EXPECT_TRUE(kill.tripped());        // the halt itself never depends on the disk
+  EXPECT_TRUE(kill.persistFailed());  // but the operator is told a restart would not be blocked
+}
+
+TEST(KillSwitchPersistence, ATripIsWrittenOwnerOnlyAndBlocksTheNextProcess) {
+  const auto path = (std::filesystem::temp_directory_path() / "futu_ks_persist").string();
+  std::filesystem::remove(path);
+  {
+    execution::KillSwitch kill(path);
+    kill.trip("daily loss");
+    EXPECT_FALSE(kill.persistFailed());
+  }
+  struct stat info {};
+  ASSERT_EQ(::stat(path.c_str(), &info), 0);
+  EXPECT_EQ(info.st_mode & 0777, 0600U);
+  execution::KillSwitch next(path);
+  EXPECT_TRUE(next.tripped());
+  std::filesystem::remove(path);
+}

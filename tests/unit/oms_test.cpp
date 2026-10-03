@@ -624,10 +624,25 @@ TEST(Oms, StaleAndDuplicateUpdatesAreIgnoredAndCounted) {
   broker.status = 5;  // a late "submitted" after "partially filled"
   h.oms.onOrderUpdate(broker);
   EXPECT_EQ(h.oms.order(id)->state, OmsState::kPartiallyFilled);
-  EXPECT_GE(h.oms.anomalyCount(), 1U);
+  EXPECT_EQ(h.oms.stats().staleUpdates.load(), 1U);  // counted...
+  EXPECT_EQ(h.oms.anomalyCount(), 0U);               // ...but a late "working" is not an anomaly
   broker.status = 10;
   h.oms.onOrderUpdate(broker);  // exact duplicate: no state change, no crash
-  EXPECT_EQ(h.oms.order(id)->state, OmsState::kPartiallyFilled);
+}
+
+TEST(Oms, AnUpdateThatContradictsALaterStateIsAnAnomalyNotJustStale) {
+  Harness h;
+  h.boot();
+  const auto id = h.oms.submit(Harness::buy("k", 200), h.quote()).clOrdId;
+  auto broker = *h.venue.byRemark(id);
+  broker.status = 15;  // cancelled
+  h.oms.onOrderUpdate(broker);
+  ASSERT_EQ(h.oms.order(id)->state, OmsState::kCancelled);
+  EXPECT_EQ(h.oms.anomalyCount(), 0U);
+  broker.status = 10;  // a partial fill after the order is dead cannot be right
+  broker.fillQty = 100;
+  h.oms.onOrderUpdate(broker);
+  EXPECT_GE(h.oms.anomalyCount(), 1U);
 }
 
 TEST(Oms, TerminalOrderIsNeverResurrected) {
